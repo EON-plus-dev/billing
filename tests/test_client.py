@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from findesk_billing.client import BillingClient
-from findesk_billing.exceptions import UnknownModelError
+from ai_billing.client import BillingClient
+from ai_billing.exceptions import UnknownModelError
 from conftest import make_openai_response, make_anthropic_response
 
 

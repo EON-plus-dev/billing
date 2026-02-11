@@ -4,8 +4,8 @@ from decimal import Decimal
 import pytest
 import fakeredis.aioredis
 
-from findesk_billing.redis_transport import RedisTransport
-from findesk_billing.schemas import DebitPayload
+from ai_billing.redis_transport import RedisTransport
+from ai_billing.schemas import DebitPayload
 
 
 @pytest.fixture

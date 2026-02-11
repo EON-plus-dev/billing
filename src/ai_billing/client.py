@@ -10,7 +10,7 @@ from .pricing import calculate_cost as _calculate_cost
 from .redis_transport import RedisTransport
 from .schemas import DebitPayload, UsageInfo
 
-logger = logging.getLogger("findesk_billing")
+logger = logging.getLogger("ai_billing")
 
 
 class BillingClient:
@@ -45,7 +45,7 @@ class BillingClient:
         except Exception:
             if not self._fail_silently:
                 raise
-            logger.exception("findesk_billing: report() failed")
+            logger.exception("ai_billing: report() failed")
             return None
 
     async def report_tokens(
@@ -78,7 +78,7 @@ class BillingClient:
         except Exception:
             if not self._fail_silently:
                 raise
-            logger.exception("findesk_billing: report_tokens() failed")
+            logger.exception("ai_billing: report_tokens() failed")
             return None
 
     async def report_cost(
@@ -94,7 +94,7 @@ class BillingClient:
         except Exception:
             if not self._fail_silently:
                 raise
-            logger.exception("findesk_billing: report_cost() failed")
+            logger.exception("ai_billing: report_cost() failed")
 
     @staticmethod
     def calculate_cost(

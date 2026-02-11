@@ -2,8 +2,8 @@ from decimal import Decimal
 
 import pytest
 
-from findesk_billing.pricing import calculate_cost, resolve_model
-from findesk_billing.exceptions import UnknownModelError
+from ai_billing.pricing import calculate_cost, resolve_model
+from ai_billing.exceptions import UnknownModelError
 
 
 class TestResolveModel:

@@ -7,7 +7,7 @@ from redis.asyncio import Redis
 
 from .schemas import DebitPayload
 
-logger = logging.getLogger("findesk_billing")
+logger = logging.getLogger("ai_billing")
 
 _DEBIT_TTL = 86400  # 24h
 

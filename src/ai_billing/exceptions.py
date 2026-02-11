@@ -1,5 +1,5 @@
 class BillingError(Exception):
-    """Base exception for findesk-billing."""
+    """Base exception for ai-billing."""
 
 
 class ParseError(BillingError):

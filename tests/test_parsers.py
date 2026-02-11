@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from findesk_billing.parsers import parse_response
-from findesk_billing.exceptions import ParseError
+from ai_billing.parsers import parse_response
+from ai_billing.exceptions import ParseError
 from conftest import make_openai_response, make_anthropic_response, make_gemini_response
 
 

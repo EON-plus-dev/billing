@@ -1,8 +1,8 @@
-# findesk-billing
+# ai-billing
 
-Бібліотека для автоматичного обліку витрат на AI у мікросервісах FinDesk.
+Бібліотека для автоматичного обліку витрат на AI.
 
-Автоматично визначає відповіді OpenAI, Anthropic та Google Gemini, розраховує вартість у USD за вбудованим прайсом і записує дебет-задачу в Redis для обробки `credit_system`.
+Автоматично визначає відповіді OpenAI, Anthropic та Google Gemini, розраховує вартість у USD за вбудованим прайсом і записує дебет-задачу в Redis.
 
 ## Встановлення
 
@@ -15,17 +15,13 @@ pip install git+https://github.com/EON-plus-dev/billing.git
 ## Швидкий старт
 
 ```python
-from findesk_billing import BillingClient
+from ai_billing import BillingClient
 
 billing = BillingClient(redis_url="redis://localhost:6380", service_name="ai_chat")
 
 # Передати відповідь від будь-якого AI SDK — бібліотека сама визначить провайдера
 response = await openai_client.chat.completions.create(model="gpt-4o-mini", messages=[...])
 usage = await billing.report(response, organization_id=123, user_id=456)
-
-# usage.cost_usd = Decimal('0.000195')
-# usage.input_tokens = 500
-# usage.output_tokens = 200
 ```
 
 ## API
@@ -101,7 +97,7 @@ await billing.report_cost(0.0035, organization_id=123, user_id=456)
 
 ```python
 from decimal import Decimal
-from findesk_billing import BillingClient
+from ai_billing import BillingClient
 
 cost = BillingClient.calculate_cost("gpt-4o-mini", input_tokens=1_000_000)
 # Decimal('0.150000')
@@ -224,14 +220,14 @@ class DebitPayload(BaseModel):
 | `ParseError` | `BillingError` | Не вдалося визначити провайдера або витягнути usage |
 | `UnknownModelError` | `BillingError` | Модель відсутня у прайсі |
 
-При `fail_silently=True` (за замовчуванням) винятки логуються через `logging.getLogger("findesk_billing")` і не пробрасываються далі — billing ніколи не ламає основну AI-операцію.
+При `fail_silently=True` (за замовчуванням) винятки логуються через `logging.getLogger("ai_billing")` і не пробрасываються далі — billing ніколи не ламає основну AI-операцію.
 
 ## Приклади інтеграції
 
 ### FastAPI endpoint
 
 ```python
-from findesk_billing import BillingClient
+from ai_billing import BillingClient
 
 billing = BillingClient(redis_url=settings.REDIS_URL, service_name="ai_chat")
 
@@ -279,9 +275,8 @@ app = FastAPI(lifespan=lifespan)
 ### Розрахунок без запису
 
 ```python
-from findesk_billing import BillingClient
+from ai_billing import BillingClient
 
-# Скільки буде коштувати запит?
 cost = BillingClient.calculate_cost("gpt-4", input_tokens=10_000, output_tokens=2_000)
 # Decimal('0.420000')
 ```
@@ -289,7 +284,7 @@ cost = BillingClient.calculate_cost("gpt-4", input_tokens=10_000, output_tokens=
 ## Розробка
 
 ```bash
-cd findesk-billing
+cd billing
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -v
@@ -298,11 +293,11 @@ pytest -v
 ## Структура
 
 ```
-findesk-billing/
+billing/
 ├── pyproject.toml
 ├── README.md
 ├── src/
-│   └── findesk_billing/
+│   └── ai_billing/
 │       ├── __init__.py          # Публічний API
 │       ├── _version.py          # "0.1.0"
 │       ├── client.py            # BillingClient

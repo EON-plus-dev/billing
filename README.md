@@ -19,9 +19,10 @@ from ai_billing import BillingClient
 
 billing = BillingClient(redis_url="redis://localhost:6380", service_name="ai_chat")
 
-# Передати відповідь від будь-якого AI SDK — бібліотека сама визначить провайдера
-response = await openai_client.chat.completions.create(model="gpt-4o-mini", messages=[...])
-usage = await billing.report(response, organization_id=123, user_id=456)
+# Перевірити баланс перед викликом AI
+if await billing.has_credits(organization_id=123):
+    response = await openai_client.chat.completions.create(model="gpt-4o-mini", messages=[...])
+    await billing.report(response, organization_id=123, user_id=456)
 ```
 
 ## API
@@ -88,6 +89,38 @@ await billing.report_cost(0.0035, organization_id=123, user_id=456)
 ```
 
 **Повертає:** `None`
+
+---
+
+### `await billing.check_balance(organization_id)`
+
+Читає закешований баланс кредитів з Redis (ключ `credits:org:{id}`).
+
+```python
+info = await billing.check_balance(organization_id=123)
+if info:
+    print(f"Balance: {info.balance} credits, tier: {info.subscription_tier}")
+```
+
+**Повертає:** `BalanceInfo | None` (None якщо кеш порожній або помилка при `fail_silently=True`)
+
+> **Примітка:** дані з кешу можуть бути неактуальними (TTL кешу — до 30 хвилин).
+
+---
+
+### `await billing.has_credits(organization_id)`
+
+Швидка перевірка: чи має організація позитивний баланс кредитів.
+
+```python
+if await billing.has_credits(organization_id=123):
+    response = await openai_client.chat.completions.create(...)
+    await billing.report(response, organization_id=123, user_id=456)
+else:
+    raise HTTPException(402, "Insufficient credits")
+```
+
+**Повертає:** `bool` — `True` якщо `balance > 0`, `False` якщо `balance <= 0` або кеш порожній.
 
 ---
 
@@ -183,6 +216,16 @@ Payload JSON:
 - `operation_id`: автогенерований UUID4 hex
 - Pipeline: SET + SADD атомарно в одному round-trip
 
+### Читання балансу
+
+`check_balance()` / `has_credits()` читають кеш:
+
+```
+GET credits:org:{organization_id}
+```
+
+Значення — JSON з полями `balance`, `owner_id`, `subscription_tier`, `multiplier`, `updated_at`. Кеш оновлюється зовнішнім сервісом (TTL ~30 хв). Якщо ключ відсутній — повертається `None` / `False`.
+
 ## Схеми даних
 
 ### `UsageInfo`
@@ -196,6 +239,20 @@ class UsageInfo(BaseModel):
     output_tokens: int            # 200
     thinking_output_tokens: int   # 0 (для Gemini thinking)
     cost_usd: Decimal             # Decimal('0.000195')
+```
+
+### `BalanceInfo`
+
+Результат `check_balance()`:
+
+```python
+class BalanceInfo(BaseModel):
+    organization_id: int
+    balance: int                          # кредити (не USD)
+    owner_id: int | None                  # власник організації
+    subscription_tier: str | None         # "premium", "basic", ...
+    multiplier: Decimal | None            # множник дебету
+    updated_at: datetime | None           # час оновлення кешу
 ```
 
 ### `DebitPayload`
@@ -224,15 +281,19 @@ class DebitPayload(BaseModel):
 
 ## Приклади інтеграції
 
-### FastAPI endpoint
+### FastAPI endpoint з перевіркою балансу
 
 ```python
+from fastapi import HTTPException
 from ai_billing import BillingClient
 
 billing = BillingClient(redis_url=settings.REDIS_URL, service_name="ai_chat")
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
+    if not await billing.has_credits(organization_id=request.organization_id):
+        raise HTTPException(402, "Insufficient credits")
+
     response = await openai_client.chat.completions.create(
         model="gpt-4o-mini",
         messages=request.messages,

@@ -8,7 +8,7 @@ from .exceptions import BillingError
 from .parsers import parse_response
 from .pricing import calculate_cost as _calculate_cost
 from .redis_transport import RedisTransport
-from .schemas import DebitPayload, UsageInfo
+from .schemas import BalanceInfo, DebitPayload, UsageInfo
 
 logger = logging.getLogger("ai_billing")
 
@@ -95,6 +95,28 @@ class BillingClient:
             if not self._fail_silently:
                 raise
             logger.exception("ai_billing: report_cost() failed")
+
+    async def check_balance(self, organization_id: int) -> BalanceInfo | None:
+        """Read cached credit balance from Redis.
+
+        Returns None if no cache entry exists (cache miss or expired).
+        Note: cache may be up to 30 min stale.
+        """
+        try:
+            return await self._transport.read_balance(organization_id)
+        except Exception:
+            if not self._fail_silently:
+                raise
+            logger.exception("ai_billing: check_balance() failed")
+            return None
+
+    async def has_credits(self, organization_id: int) -> bool:
+        """Quick check: does the organization have a positive credit balance?
+
+        Returns True if balance > 0, False if balance <= 0 or cache miss.
+        """
+        balance = await self.check_balance(organization_id)
+        return balance is not None and balance.balance > 0
 
     @staticmethod
     def calculate_cost(

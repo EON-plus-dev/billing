@@ -5,7 +5,9 @@ from uuid import uuid4
 
 from redis.asyncio import Redis
 
-from .schemas import DebitPayload
+import json
+
+from .schemas import BalanceInfo, DebitPayload
 
 logger = logging.getLogger("ai_billing")
 
@@ -35,6 +37,15 @@ class RedisTransport:
             pipe.sadd("debit:queue", op_id)
             await pipe.execute()
         return op_id
+
+    async def read_balance(self, organization_id: int) -> BalanceInfo | None:
+        """Read cached balance for an organization. Returns None if not cached."""
+        redis = await self._get_redis()
+        raw = await redis.get(f"credits:org:{organization_id}")
+        if raw is None:
+            return None
+        data = json.loads(raw)
+        return BalanceInfo(organization_id=organization_id, **data)
 
     async def close(self) -> None:
         if self._redis is not None:

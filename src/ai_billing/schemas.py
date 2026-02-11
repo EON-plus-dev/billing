@@ -15,6 +15,15 @@ class UsageInfo(BaseModel):
     cost_usd: Decimal
 
 
+class BalanceInfo(BaseModel):
+    organization_id: int
+    balance: int
+    owner_id: int | None = None
+    subscription_tier: str | None = None
+    multiplier: Decimal | None = None
+    updated_at: datetime | None = None
+
+
 class DebitPayload(BaseModel):
     organization_id: int
     amount_usd: Decimal = Field(decimal_places=6)

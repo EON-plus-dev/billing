@@ -5,6 +5,7 @@ import pytest
 
 from ai_billing.client import BillingClient
 from ai_billing.exceptions import UnknownModelError
+from ai_billing.schemas import BalanceInfo
 from conftest import make_openai_response, make_anthropic_response
 
 
@@ -74,6 +75,44 @@ class TestReportCost:
     async def test_basic(self, client):
         await client.report_cost(0.005, organization_id=1, user_id=2)
         client._transport.write_debit.assert_awaited_once()
+
+
+class TestCheckBalance:
+    async def test_returns_balance(self, client):
+        client._transport.read_balance = AsyncMock(
+            return_value=BalanceInfo(organization_id=1, balance=50000)
+        )
+        info = await client.check_balance(organization_id=1)
+        assert info is not None
+        assert info.balance == 50000
+
+    async def test_cache_miss(self, client):
+        client._transport.read_balance = AsyncMock(return_value=None)
+        info = await client.check_balance(organization_id=1)
+        assert info is None
+
+    async def test_fail_silently(self, client):
+        client._transport.read_balance = AsyncMock(side_effect=Exception("boom"))
+        info = await client.check_balance(organization_id=1)
+        assert info is None
+
+
+class TestHasCredits:
+    async def test_positive_balance(self, client):
+        client._transport.read_balance = AsyncMock(
+            return_value=BalanceInfo(organization_id=1, balance=100)
+        )
+        assert await client.has_credits(organization_id=1) is True
+
+    async def test_zero_balance(self, client):
+        client._transport.read_balance = AsyncMock(
+            return_value=BalanceInfo(organization_id=1, balance=0)
+        )
+        assert await client.has_credits(organization_id=1) is False
+
+    async def test_cache_miss(self, client):
+        client._transport.read_balance = AsyncMock(return_value=None)
+        assert await client.has_credits(organization_id=1) is False
 
 
 class TestCalculateCost:

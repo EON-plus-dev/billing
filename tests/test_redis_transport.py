@@ -54,3 +54,27 @@ class TestWriteDebit:
     async def test_close(self, transport):
         await transport.close()
         assert transport._redis is None
+
+
+class TestReadBalance:
+    async def test_returns_balance(self, transport):
+        await transport._redis.set(
+            "credits:org:42",
+            json.dumps({
+                "balance": 50000,
+                "owner_id": 7,
+                "updated_at": "2026-02-11T10:00:00+00:00",
+                "subscription_tier": "premium",
+                "multiplier": "1.8",
+            }),
+        )
+        info = await transport.read_balance(42)
+        assert info is not None
+        assert info.organization_id == 42
+        assert info.balance == 50000
+        assert info.owner_id == 7
+        assert info.subscription_tier == "premium"
+
+    async def test_returns_none_on_miss(self, transport):
+        info = await transport.read_balance(999)
+        assert info is None

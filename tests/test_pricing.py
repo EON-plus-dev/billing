@@ -16,6 +16,12 @@ class TestResolveModel:
         name, price = resolve_model("gpt-5-nano-2025-08-07")
         assert name == "gpt-5-nano"
 
+    def test_prefix_match_gpt5_mini(self):
+        name, price = resolve_model("gpt-5-mini-2025-08-07")
+        assert name == "gpt-5-mini"
+        assert price.input == Decimal("0.25")
+        assert price.output == Decimal("2.00")
+
     def test_unknown_model(self):
         with pytest.raises(UnknownModelError):
             resolve_model("unknown-model-xyz")

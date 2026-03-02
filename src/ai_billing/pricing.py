@@ -26,6 +26,9 @@ MODEL_PRICING: dict[str, ModelPrice] = {
     "gpt-4.1-nano": ModelPrice(
         input=Decimal("0.10"), output=Decimal("0.40"), provider="openai",
     ),
+    "gpt-5-mini": ModelPrice(
+        input=Decimal("0.25"), output=Decimal("2.00"), provider="openai",
+    ),
     "gpt-5-nano": ModelPrice(
         input=Decimal("0.05"), output=Decimal("0.40"), provider="openai",
     ),

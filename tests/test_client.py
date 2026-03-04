@@ -110,9 +110,9 @@ class TestHasCredits:
         )
         assert await client.has_credits(organization_id=1) is False
 
-    async def test_cache_miss(self, client):
+    async def test_cache_miss_fail_open(self, client):
         client._transport.read_balance = AsyncMock(return_value=None)
-        assert await client.has_credits(organization_id=1) is False
+        assert await client.has_credits(organization_id=1) is True
 
 
 class TestCalculateCost:

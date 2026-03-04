@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from .exceptions import BillingError
+from .http_transport import HttpTransport
 from .parsers import parse_response
 from .pricing import calculate_cost as _calculate_cost
 from .redis_transport import RedisTransport
@@ -22,8 +23,13 @@ class BillingClient:
         service_name: str,
         *,
         fail_silently: bool = True,
+        credit_system_url: str | None = None,
+        secret_key: str | None = None,
     ) -> None:
-        self._transport = RedisTransport(redis_url)
+        http_fallback = None
+        if credit_system_url and secret_key:
+            http_fallback = HttpTransport(credit_system_url, service_name, secret_key)
+        self._transport = RedisTransport(redis_url, http_fallback=http_fallback)
         self._service_name = service_name
         self._fail_silently = fail_silently
 
@@ -113,10 +119,13 @@ class BillingClient:
     async def has_credits(self, organization_id: int) -> bool:
         """Quick check: does the organization have a positive credit balance?
 
-        Returns True if balance > 0, False if balance <= 0 or cache miss.
+        Fail-open: returns True when both Redis and HTTP fallback are unavailable,
+        so AI features are not blocked by infrastructure issues.
         """
         balance = await self.check_balance(organization_id)
-        return balance is not None and balance.balance > 0
+        if balance is None:
+            return True
+        return balance.balance > 0
 
     @staticmethod
     def calculate_cost(

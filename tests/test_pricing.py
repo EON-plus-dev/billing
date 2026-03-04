@@ -50,8 +50,8 @@ class TestCalculateCost:
             output_tokens=0,
             thinking_output_tokens=1_000_000,
         )
-        # input: 0.15, thinking: 3.50 -> 3.65
-        assert cost == Decimal("3.650000")
+        # input: 0.30, thinking: 2.50 -> 2.80
+        assert cost == Decimal("2.800000")
 
     def test_zero_tokens(self):
         cost = calculate_cost("gpt-4o-mini")

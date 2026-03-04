@@ -17,11 +17,15 @@ class ModelPrice:
 
 
 MODEL_PRICING: dict[str, ModelPrice] = {
+    # OpenAI — https://openai.com/api/pricing/
+    "gpt-4o": ModelPrice(
+        input=Decimal("2.50"), output=Decimal("10.00"), provider="openai",
+    ),
     "gpt-4o-mini": ModelPrice(
         input=Decimal("0.15"), output=Decimal("0.60"), provider="openai",
     ),
     "gpt-4.1-mini": ModelPrice(
-        input=Decimal("0.10"), output=Decimal("0.40"), provider="openai",
+        input=Decimal("0.40"), output=Decimal("1.60"), provider="openai",
     ),
     "gpt-4.1-nano": ModelPrice(
         input=Decimal("0.10"), output=Decimal("0.40"), provider="openai",
@@ -38,13 +42,18 @@ MODEL_PRICING: dict[str, ModelPrice] = {
     "text-embedding-3-small": ModelPrice(
         input=Decimal("0.02"), output=Decimal("0"), provider="openai",
     ),
+    # Google — https://ai.google.dev/gemini-api/docs/pricing
     "gemini-2.5-flash": ModelPrice(
-        input=Decimal("0.15"), output=Decimal("0.60"),
-        thinking_output=Decimal("3.50"), provider="google",
+        input=Decimal("0.30"), output=Decimal("2.50"),
+        thinking_output=Decimal("2.50"), provider="google",
+    ),
+    "gemini-2.0-flash": ModelPrice(
+        input=Decimal("0.10"), output=Decimal("0.40"), provider="google",
     ),
     "gemini-1.5-flash": ModelPrice(
         input=Decimal("0.075"), output=Decimal("0.30"), provider="google",
     ),
+    # Anthropic — https://platform.claude.com/docs/en/about-claude/pricing
     "claude-sonnet-4-5-20250929": ModelPrice(
         input=Decimal("3.00"), output=Decimal("15.00"), provider="anthropic",
     ),

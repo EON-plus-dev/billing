@@ -72,6 +72,10 @@ class BillingClient:
                 output_tokens=output_tokens,
                 thinking_output_tokens=thinking_output_tokens,
             )
+            logger.info(
+                "ai_billing: report_tokens cost=%s model=%s in=%d out=%d org=%d",
+                cost, model, input_tokens, output_tokens, organization_id,
+            )
             usage = UsageInfo(
                 model=model,
                 input_tokens=input_tokens,
@@ -80,6 +84,7 @@ class BillingClient:
                 cost_usd=cost,
             )
             await self._write(cost, organization_id, user_id)
+            logger.info("ai_billing: report_tokens write OK org=%d", organization_id)
             return usage
         except Exception:
             if not self._fail_silently:

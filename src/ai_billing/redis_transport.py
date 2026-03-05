@@ -37,10 +37,15 @@ class RedisTransport:
         op_id = payload.operation_id or uuid4().hex
         key = f"debit:{op_id}"
         data = payload.model_dump_json()
+        logger.info(
+            "ai_billing: write_debit key=%s org=%d amount=%s service=%s",
+            key, payload.organization_id, payload.amount_usd, payload.service,
+        )
         async with redis.pipeline(transaction=True) as pipe:
             pipe.set(key, data, ex=_DEBIT_TTL)
             pipe.sadd("debit:queue", op_id)
-            await pipe.execute()
+            result = await pipe.execute()
+        logger.info("ai_billing: write_debit OK op=%s pipeline_result=%s", op_id, result)
         return op_id
 
     async def read_balance(self, organization_id: int) -> BalanceInfo | None:

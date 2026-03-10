@@ -57,6 +57,9 @@ MODEL_PRICING: dict[str, ModelPrice] = {
     "claude-sonnet-4-5-20250929": ModelPrice(
         input=Decimal("3.00"), output=Decimal("15.00"), provider="anthropic",
     ),
+    "claude-sonnet-4-6": ModelPrice(
+        input=Decimal("3.00"), output=Decimal("15.00"), provider="anthropic",
+    ),
 }
 
 # Sorted longest-first for greedy prefix match

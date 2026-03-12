@@ -66,6 +66,24 @@ class RedisTransport:
 
         return None
 
+    async def read_balance_by_user(self, user_id: int) -> BalanceInfo | None:
+        """Read cached balance for a user (no organization).
+
+        On cache miss, falls back to HTTP if configured.
+        Returns None only if both Redis and HTTP fail.
+        """
+        redis = await self._get_redis()
+        raw = await redis.get(f"credits:user:{user_id}")
+        if raw is not None:
+            data = json.loads(raw)
+            return BalanceInfo(organization_id=0, **data)
+
+        if self._http_fallback is not None:
+            logger.info("ai_billing: Redis cache miss for user=%d, trying HTTP fallback", user_id)
+            return await self._http_fallback.check_balance_by_user(user_id)
+
+        return None
+
     async def close(self) -> None:
         if self._redis is not None:
             await self._redis.aclose()

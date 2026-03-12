@@ -86,6 +86,34 @@ class HttpTransport:
             )
             return None
 
+    async def check_balance_by_user(self, user_id: int) -> BalanceInfo | None:
+        """POST /internal/check-balance-by-user → BalanceInfo or None on any error."""
+        try:
+            session = await self._get_session()
+            token = self._get_token()
+            resp = await session.post(
+                f"{self._base_url}/internal/check-balance-by-user",
+                json={"user_id": user_id, "required_credits": 0},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status != 200:
+                logger.warning(
+                    "ai_billing: HTTP fallback returned %d for user=%d",
+                    resp.status, user_id,
+                )
+                return None
+
+            data = await resp.json()
+            return BalanceInfo(
+                organization_id=0,
+                balance=data["current_balance"],
+            )
+        except Exception:
+            logger.exception(
+                "ai_billing: HTTP fallback failed for user=%d", user_id,
+            )
+            return None
+
     async def close(self) -> None:
         if self._session is not None and not self._session.closed:
             await self._session.close()

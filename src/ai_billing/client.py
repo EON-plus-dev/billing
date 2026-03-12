@@ -132,6 +132,83 @@ class BillingClient:
             return True
         return balance.balance > 0
 
+    # -- user-based API (no organization) -----------------------------------
+
+    async def report_tokens_by_user(
+        self,
+        model: str,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        thinking_output_tokens: int = 0,
+        user_id: int,
+    ) -> UsageInfo | None:
+        """Calculate cost from token counts and write debit for a user (no org)."""
+        try:
+            cost = _calculate_cost(
+                model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                thinking_output_tokens=thinking_output_tokens,
+            )
+            logger.info(
+                "ai_billing: report_tokens_by_user cost=%s model=%s in=%d out=%d user=%d",
+                cost, model, input_tokens, output_tokens, user_id,
+            )
+            usage = UsageInfo(
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                thinking_output_tokens=thinking_output_tokens,
+                cost_usd=cost,
+            )
+            await self._write_by_user(cost, user_id)
+            logger.info("ai_billing: report_tokens_by_user write OK user=%d", user_id)
+            return usage
+        except Exception:
+            if not self._fail_silently:
+                raise
+            logger.exception("ai_billing: report_tokens_by_user() failed")
+            return None
+
+    async def report_cost_by_user(
+        self,
+        cost_usd: float | Decimal,
+        *,
+        user_id: int,
+    ) -> None:
+        """Write a debit with a pre-calculated cost for a user (no org)."""
+        try:
+            await self._write_by_user(Decimal(str(cost_usd)), user_id)
+        except Exception:
+            if not self._fail_silently:
+                raise
+            logger.exception("ai_billing: report_cost_by_user() failed")
+
+    async def check_balance_by_user(self, user_id: int) -> BalanceInfo | None:
+        """Read cached credit balance for a user (no organization).
+
+        Returns None if no cache entry exists (cache miss or expired).
+        """
+        try:
+            return await self._transport.read_balance_by_user(user_id)
+        except Exception:
+            if not self._fail_silently:
+                raise
+            logger.exception("ai_billing: check_balance_by_user() failed")
+            return None
+
+    async def has_credits_by_user(self, user_id: int) -> bool:
+        """Quick check: does the user have a positive credit balance?
+
+        Fail-open: returns True when both Redis and HTTP fallback are unavailable,
+        so AI features are not blocked by infrastructure issues.
+        """
+        balance = await self.check_balance_by_user(user_id)
+        if balance is None:
+            return True
+        return balance.balance > 0
+
     @staticmethod
     def calculate_cost(
         model: str,
@@ -156,6 +233,15 @@ class BillingClient:
     async def _write(self, cost_usd: Decimal, organization_id: int, user_id: int) -> None:
         payload = DebitPayload(
             organization_id=organization_id,
+            amount_usd=cost_usd,
+            service=self._service_name,
+            user_id=user_id,
+        )
+        await self._transport.write_debit(payload)
+
+    async def _write_by_user(self, cost_usd: Decimal, user_id: int) -> None:
+        payload = DebitPayload(
+            organization_id=None,
             amount_usd=cost_usd,
             service=self._service_name,
             user_id=user_id,

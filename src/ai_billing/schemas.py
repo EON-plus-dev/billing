@@ -25,7 +25,7 @@ class BalanceInfo(BaseModel):
 
 
 class DebitPayload(BaseModel):
-    organization_id: int
+    organization_id: int | None = None
     amount_usd: Decimal = Field(decimal_places=6)
     service: str
     user_id: int

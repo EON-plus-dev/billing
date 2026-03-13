@@ -38,7 +38,7 @@ class RedisTransport:
         key = f"debit:{op_id}"
         data = payload.model_dump_json()
         logger.info(
-            "ai_billing: write_debit key=%s org=%d amount=%s service=%s",
+            "ai_billing: write_debit key=%s org=%s amount=%s service=%s",
             key, payload.organization_id, payload.amount_usd, payload.service,
         )
         async with redis.pipeline(transaction=True) as pipe:

@@ -124,11 +124,17 @@ class BillingClient:
     async def has_credits(self, organization_id: int) -> bool:
         """Quick check: does the organization have a positive credit balance?
 
-        Fail-open: returns True when both Redis and HTTP fallback are unavailable,
-        so AI features are not blocked by infrastructure issues.
+        When fail_silently=False and balance cannot be determined, raises
+        RuntimeError so the caller can block the operation.
+        When fail_silently=True, returns True (fail-open) for backwards compatibility.
         """
         balance = await self.check_balance(organization_id)
         if balance is None:
+            if not self._fail_silently:
+                raise RuntimeError(
+                    f"Cannot determine credit balance for org={organization_id}: "
+                    "Redis cache miss and HTTP fallback failed"
+                )
             return True
         return balance.balance > 0
 
@@ -201,11 +207,17 @@ class BillingClient:
     async def has_credits_by_user(self, user_id: int) -> bool:
         """Quick check: does the user have a positive credit balance?
 
-        Fail-open: returns True when both Redis and HTTP fallback are unavailable,
-        so AI features are not blocked by infrastructure issues.
+        When fail_silently=False and balance cannot be determined, raises
+        RuntimeError so the caller can block the operation.
+        When fail_silently=True, returns True (fail-open) for backwards compatibility.
         """
         balance = await self.check_balance_by_user(user_id)
         if balance is None:
+            if not self._fail_silently:
+                raise RuntimeError(
+                    f"Cannot determine credit balance for user={user_id}: "
+                    "Redis cache miss and HTTP fallback failed"
+                )
             return True
         return balance.balance > 0
 

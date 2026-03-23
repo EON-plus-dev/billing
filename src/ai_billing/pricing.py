@@ -43,6 +43,9 @@ MODEL_PRICING: dict[str, ModelPrice] = {
         input=Decimal("0.02"), output=Decimal("0"), provider="openai",
     ),
     # Google — https://ai.google.dev/gemini-api/docs/pricing
+    "gemini-3-flash": ModelPrice(
+        input=Decimal("0.10"), output=Decimal("0.40"), provider="google",
+    ),
     "gemini-2.5-flash": ModelPrice(
         input=Decimal("0.30"), output=Decimal("2.50"),
         thinking_output=Decimal("2.50"), provider="google",

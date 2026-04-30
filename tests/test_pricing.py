@@ -1,8 +1,15 @@
+import re
 from decimal import Decimal
 
 import pytest
 
-from ai_billing.pricing import calculate_cost, resolve_model
+from ai_billing.pricing import (
+    MODEL_PRICING,
+    MODEL_PRICING_VERIFIED_AT,
+    calculate_cost,
+    get_vat_multiplier,
+    resolve_model,
+)
 from ai_billing.exceptions import UnknownModelError
 
 
@@ -65,3 +72,60 @@ class TestCalculateCost:
     def test_prefix_versioned_model(self):
         cost = calculate_cost("gpt-5-nano-2025-08-07", input_tokens=1_000_000)
         assert cost == Decimal("0.05")
+
+
+class TestModelPriceCachePricing:
+    """Anthropic prompt caching pricing — added 2026-04-29."""
+
+    def test_haiku_4_5_present_with_full_cache_pricing(self):
+        haiku = MODEL_PRICING["claude-haiku-4-5"]
+        assert haiku.input == Decimal("1.00")
+        assert haiku.output == Decimal("5.00")
+        assert haiku.cache_read == Decimal("0.10")
+        assert haiku.cache_write == Decimal("1.25")
+        assert haiku.provider == "anthropic"
+
+    def test_sonnet_4_6_has_cache_pricing(self):
+        sonnet = MODEL_PRICING["claude-sonnet-4-6"]
+        assert sonnet.cache_read == Decimal("0.30")
+        assert sonnet.cache_write == Decimal("3.75")
+
+    def test_sonnet_4_5_has_cache_pricing(self):
+        sonnet = MODEL_PRICING["claude-sonnet-4-5-20250929"]
+        assert sonnet.cache_read == Decimal("0.30")
+        assert sonnet.cache_write == Decimal("3.75")
+
+    def test_openai_models_default_zero_cache(self):
+        gpt = MODEL_PRICING["gpt-4o"]
+        assert gpt.cache_read == Decimal("0")
+        assert gpt.cache_write == Decimal("0")
+
+    def test_gemini_models_default_zero_cache(self):
+        gemini = MODEL_PRICING["gemini-2.5-flash"]
+        assert gemini.cache_read == Decimal("0")
+        assert gemini.cache_write == Decimal("0")
+
+
+class TestModelPricingVerifiedAt:
+    def test_is_string(self):
+        assert isinstance(MODEL_PRICING_VERIFIED_AT, str)
+
+    def test_format_yyyy_mm_dd(self):
+        assert re.match(r"^\d{4}-\d{2}-\d{2}$", MODEL_PRICING_VERIFIED_AT)
+
+
+class TestVatMultiplier:
+    def test_default_120_when_env_unset(self, monkeypatch):
+        monkeypatch.delenv("VAT_MULTIPLIER", raising=False)
+        assert get_vat_multiplier() == Decimal("1.20")
+
+    def test_get_vat_reads_env_at_call_time(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.50")
+        assert get_vat_multiplier() == Decimal("1.50")
+
+        monkeypatch.setenv("VAT_MULTIPLIER", "0.00")
+        assert get_vat_multiplier() == Decimal("0.00")
+
+    def test_get_vat_zero_vat_country(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
+        assert get_vat_multiplier() == Decimal("1.00")

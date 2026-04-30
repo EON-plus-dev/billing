@@ -7,9 +7,11 @@ from ai_billing.pricing import (
     MODEL_PRICING,
     MODEL_PRICING_VERIFIED_AT,
     calculate_cost,
+    calculate_cost_breakdown,
     get_vat_multiplier,
     resolve_model,
 )
+from ai_billing.schemas import Usage
 from ai_billing.exceptions import UnknownModelError
 
 
@@ -129,3 +131,73 @@ class TestVatMultiplier:
     def test_get_vat_zero_vat_country(self, monkeypatch):
         monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
         assert get_vat_multiplier() == Decimal("1.00")
+
+
+class TestCalculateCostBreakdown:
+    def test_haiku_no_cache(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.20")
+        usage = Usage(input_tokens=1_000_000, output_tokens=1_000_000)
+        cb = calculate_cost_breakdown("claude-haiku-4-5", usage)
+        # Haiku $1/$5 input/output → 1 + 5 = 6 cost_no_vat
+        assert cb.by_component["input"] == Decimal("1.000000")
+        assert cb.by_component["output"] == Decimal("5.000000")
+        assert cb.by_component["cache_read"] == Decimal("0")
+        assert cb.by_component["cache_write"] == Decimal("0")
+        assert cb.cost_no_vat == Decimal("6.000000")
+        # VAT 20% → vat = 1.20, total = 7.20
+        assert cb.vat == Decimal("1.200000")
+        assert cb.cost_total == Decimal("7.200000")
+
+    def test_haiku_full_cache(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.20")
+        # 1M of each: input=$1, output=$5, cache_read=$0.10, cache_write=$1.25
+        usage = Usage(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cached_input_tokens=1_000_000,
+            cache_write_tokens=1_000_000,
+        )
+        cb = calculate_cost_breakdown("claude-haiku-4-5", usage)
+        assert cb.by_component["cache_read"] == Decimal("0.100000")
+        assert cb.by_component["cache_write"] == Decimal("1.250000")
+        assert cb.cost_no_vat == Decimal("7.350000")  # 1+5+0.10+1.25
+        # VAT 20% → 7.35 * 1.20 = 8.82
+        assert cb.cost_total == Decimal("8.820000")
+
+    def test_openai_silent_zero_cache(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.20")
+        # gpt-4o has no cache pricing — cache tokens silently cost 0
+        usage = Usage(
+            input_tokens=1_000_000,
+            output_tokens=0,
+            cached_input_tokens=500_000,
+            cache_write_tokens=500_000,
+        )
+        cb = calculate_cost_breakdown("gpt-4o", usage)
+        assert cb.by_component["cache_read"] == Decimal("0")
+        assert cb.by_component["cache_write"] == Decimal("0")
+        # Тільки input ($2.50)
+        assert cb.cost_no_vat == Decimal("2.500000")
+
+    def test_breakdown_with_env_vat_changed(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.50")
+        usage = Usage(input_tokens=1_000_000, output_tokens=0)
+        cb = calculate_cost_breakdown("claude-haiku-4-5", usage)
+        # Input only: $1 cost_no_vat
+        # VAT 50%: vat = 0.50, total = 1.50
+        assert cb.cost_no_vat == Decimal("1.000000")
+        assert cb.vat == Decimal("0.500000")
+        assert cb.cost_total == Decimal("1.500000")
+
+    def test_breakdown_zero_vat(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
+        usage = Usage(input_tokens=1_000_000, output_tokens=1_000_000)
+        cb = calculate_cost_breakdown("claude-haiku-4-5", usage)
+        assert cb.cost_no_vat == Decimal("6.000000")
+        assert cb.vat == Decimal("0.000000")
+        assert cb.cost_total == Decimal("6.000000")
+
+    def test_breakdown_unknown_model_raises(self):
+        usage = Usage(input_tokens=100, output_tokens=50)
+        with pytest.raises(UnknownModelError):
+            calculate_cost_breakdown("nonexistent-model-xyz", usage)

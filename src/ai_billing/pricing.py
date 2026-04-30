@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .exceptions import UnknownModelError
+from .schemas import CostBreakdown, Usage
 
 _PER_M = Decimal("1_000_000")
 
@@ -125,3 +126,35 @@ def calculate_cost(
         + price.thinking_output * thinking_output_tokens
     ) / _PER_M
     return cost.quantize(Decimal("0.000001"))
+
+
+def calculate_cost_breakdown(model: str, usage: Usage) -> CostBreakdown:
+    """Calculate cost breakdown with per-component split and VAT.
+
+    For models without cache_read/cache_write pricing (e.g. OpenAI),
+    cache components silently return Decimal("0") even if usage carries
+    cache tokens — matches the fail-silent style of the rest of the lib.
+
+    Returns CostBreakdown with all amounts quantized to 6 decimal places.
+    """
+    _, price = resolve_model(model)
+
+    q = Decimal("0.000001")
+    by_component: dict[str, Decimal] = {
+        "input":       (price.input * usage.input_tokens / _PER_M).quantize(q),
+        "output":      (price.output * usage.output_tokens / _PER_M).quantize(q),
+        "cache_read":  (price.cache_read * usage.cached_input_tokens / _PER_M).quantize(q),
+        "cache_write": (price.cache_write * usage.cache_write_tokens / _PER_M).quantize(q),
+    }
+
+    cost_no_vat = sum(by_component.values(), Decimal("0")).quantize(q)
+    vat_mult = get_vat_multiplier()
+    vat = (cost_no_vat * (vat_mult - Decimal("1"))).quantize(q)
+    cost_total = (cost_no_vat + vat).quantize(q)
+
+    return CostBreakdown(
+        cost_no_vat=cost_no_vat,
+        vat=vat,
+        cost_total=cost_total,
+        by_component=by_component,
+    )

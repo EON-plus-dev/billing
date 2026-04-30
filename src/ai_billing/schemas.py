@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -13,6 +14,32 @@ class UsageInfo(BaseModel):
     output_tokens: int
     thinking_output_tokens: int = 0
     cost_usd: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class Usage:
+    """Token usage for cache-aware cost calculation.
+
+    For in-memory cost calculation (input to calculate_cost_breakdown).
+    Use UsageInfo (Pydantic) for serialization/reporting.
+    """
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class CostBreakdown:
+    """Detailed cost breakdown with per-component split and VAT.
+
+    by_component keys: 'input', 'output', 'cache_read', 'cache_write'.
+    All amounts in USD, quantized to 6 decimal places.
+    """
+    cost_no_vat: Decimal
+    vat: Decimal
+    cost_total: Decimal
+    by_component: dict[str, Decimal] = field(default_factory=dict)
 
 
 class BalanceInfo(BaseModel):

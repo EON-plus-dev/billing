@@ -4,7 +4,7 @@ from typing import Any
 
 from .exceptions import ParseError
 from .schemas import UsageInfo
-from .pricing import _calculate_cost_legacy as calculate_cost
+from .pricing import _calculate_cost_legacy
 
 
 def _safe_getattr(obj: Any, *attrs: str) -> Any:
@@ -25,7 +25,7 @@ def _try_openai(response: Any) -> UsageInfo | None:
     model = getattr(response, "model", None)
     if model is None:
         return None
-    cost = calculate_cost(model, input_tokens=prompt_tokens, output_tokens=completion_tokens)
+    cost = _calculate_cost_legacy(model, input_tokens=prompt_tokens, output_tokens=completion_tokens)
     return UsageInfo(
         model=model,
         input_tokens=prompt_tokens,
@@ -44,7 +44,7 @@ def _try_anthropic(response: Any) -> UsageInfo | None:
     model = getattr(response, "model", None)
     if model is None:
         return None
-    cost = calculate_cost(model, input_tokens=input_tokens, output_tokens=output_tokens)
+    cost = _calculate_cost_legacy(model, input_tokens=input_tokens, output_tokens=output_tokens)
     return UsageInfo(
         model=model,
         input_tokens=input_tokens,
@@ -67,7 +67,7 @@ def _try_gemini(response: Any, model_override: str | None = None) -> UsageInfo |
     model = model_override or getattr(response, "model", None)
     if model is None:
         raise ParseError("Gemini response detected but no model name; pass model_override")
-    cost = calculate_cost(
+    cost = _calculate_cost_legacy(
         model,
         input_tokens=prompt_token_count,
         output_tokens=candidates_token_count,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from decimal import Decimal
+from types import MappingProxyType
 
 from .exceptions import UnknownModelError
 from .schemas import CostBreakdown, Usage
@@ -82,15 +83,19 @@ MODEL_PRICING: dict[str, ModelPrice] = {
 # Date pricing was last verified against provider docs. Bump on every price update.
 MODEL_PRICING_VERIFIED_AT: str = "2026-04-29"
 
-# Module constant — captured at import. Use get_vat_multiplier() for runtime/test override.
+# Module constant — captured at import. READ-ONLY snapshot for inspection / logging.
+# DO NOT use this in cost-calculation code paths — it does NOT pick up runtime
+# changes (env mutations, admin UI toggles, monkeypatch in tests).
+# For any runtime/computational use, call get_vat_multiplier() instead.
 VAT_MULTIPLIER: Decimal = Decimal(os.getenv("VAT_MULTIPLIER", "1.20"))
 
 
 def get_vat_multiplier() -> Decimal:
     """Read VAT multiplier from env at call time.
 
-    Use in cost-calculation code to allow tests to monkeypatch VAT_MULTIPLIER
-    without importlib.reload. Default 1.20 (Ukrainian VAT 20%).
+    Prefer this over the VAT_MULTIPLIER constant in any cost-calculation code
+    path: it picks up runtime overrides (admin UI / BillingSettings.vat_multiplier
+    via env propagation, monkeypatch in tests). Default 1.20 (Ukrainian VAT 20%).
     """
     return Decimal(os.getenv("VAT_MULTIPLIER", "1.20"))
 
@@ -111,7 +116,7 @@ def resolve_model(model: str) -> tuple[str, ModelPrice]:
             return prefix, MODEL_PRICING[prefix]
     raise UnknownModelError(
         f"Unknown model: {model!r}. "
-        f"Valid models: {sorted(MODEL_PRICING.keys())}"
+        f"Valid models: {', '.join(sorted(MODEL_PRICING.keys()))}"
     )
 
 
@@ -174,5 +179,6 @@ def calculate_cost(model_id: str, usage: Usage) -> CostBreakdown:
         cost_no_vat=cost_no_vat,
         vat=vat,
         cost_total=cost_total,
-        by_component=by_component,
+        # MappingProxyType: read-only view, callers cannot mutate the breakdown.
+        by_component=MappingProxyType(by_component),
     )

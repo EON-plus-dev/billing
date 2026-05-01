@@ -7,7 +7,7 @@ from typing import Any
 from .exceptions import BillingError
 from .http_transport import HttpTransport
 from .parsers import parse_response
-from .pricing import calculate_cost as _calculate_cost
+from .pricing import _calculate_cost_legacy as _calculate_cost
 from .redis_transport import RedisTransport
 from .schemas import BalanceInfo, DebitPayload, UsageInfo
 

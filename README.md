@@ -10,7 +10,7 @@
 pip install git+https://github.com/EON-plus-dev/billing.git
 ```
 
-Залежності: `redis[hiredis]>=5.0`, `pydantic>=2.0`.
+Залежності: `redis[hiredis]>=5.0`, `pydantic>=2.0`, `aiohttp>=3.9`, `PyJWT>=2.0`.
 
 ## Швидкий старт
 
@@ -126,7 +126,7 @@ else:
 
 ### `BillingClient.calculate_cost(model, *, input_tokens=0, output_tokens=0, thinking_output_tokens=0)`
 
-Статичний метод. Чистий розрахунок вартості без Redis та побічних ефектів.
+Статичний метод. Простий розрахунок вартості (без ПДВ, без cache, без розкладу). Підтримує `thinking_output_tokens` для Gemini-thinking моделей.
 
 ```python
 from decimal import Decimal
@@ -136,10 +136,55 @@ cost = BillingClient.calculate_cost("gpt-4o-mini", input_tokens=1_000_000)
 # Decimal('0.150000')
 
 cost = BillingClient.calculate_cost("gemini-2.5-flash", input_tokens=1000, thinking_output_tokens=5000)
-# Decimal('0.017650')
+# Decimal('0.012800')
 ```
 
-**Повертає:** `Decimal`
+**Повертає:** `Decimal` (USD, без ПДВ).
+
+> Для cache-aware розрахунку з ПДВ і розкладом по компонентах див. модуль-рівневий `calculate_cost(model_id, usage)` нижче.
+
+---
+
+### `calculate_cost(model_id, usage) → CostBreakdown`
+
+Модуль-рівнева функція. Розраховує вартість з ПДВ і розкладом по 4 компонентах: `input`, `output`, `cache_read`, `cache_write`. Призначена для cache-aware білінгу (Anthropic prompt caching) і бухгалтерських звітів.
+
+```python
+from ai_billing import calculate_cost, Usage
+
+usage = Usage(
+    input_tokens=1500,
+    output_tokens=800,
+    cached_input_tokens=12000,   # Anthropic prompt cache read
+    cache_write_tokens=5000,     # Anthropic prompt cache write (5-min)
+)
+cb = calculate_cost("claude-sonnet-4-6", usage)
+
+# CostBreakdown(
+#     cost_no_vat=Decimal('0.039600'),
+#     vat=Decimal('0.007920'),
+#     cost_total=Decimal('0.047520'),
+#     by_component={
+#         'input':       Decimal('0.004500'),
+#         'output':      Decimal('0.012000'),
+#         'cache_read':  Decimal('0.003600'),
+#         'cache_write': Decimal('0.018750'),
+#     },
+# )
+```
+
+**ПДВ-множник** береться з `VAT_MULTIPLIER` env (default `1.20` — український ПДВ 20%). ПДВ застосовується тільки до **внутрішнього кост-каунтера** AI-операцій (Anthropic-як-нерезидент). До B2C топапів і пакетів ПДВ окремо НЕ додається.
+
+> **`VAT_MULTIPLIER` const vs `get_vat_multiplier()` функція.** Бібліотека експортує обидві назви, але використовуйте їх по-різному:
+>
+> - **`VAT_MULTIPLIER`** — read-only snapshot, захоплений на момент `import ai_billing`. Призначений для **інспекції / логування**. НЕ використовуйте в розрахунках, бо він не побачить runtime-зміни (admin UI / `BillingSettings.vat_multiplier` через env propagation, monkeypatch у тестах).
+> - **`get_vat_multiplier()`** — читає env при кожному виклику. Призначений для **розрахункового коду**. `calculate_cost(...)` всередині використовує саме цю функцію, тому ваш виклик завжди отримає актуальне значення.
+
+**Cache pricing** є тільки в Anthropic-моделях. Для OpenAI/Gemini моделей `cached_input_tokens` і `cache_write_tokens` тихо коштують 0 — навіть якщо передано в `Usage`.
+
+**Помилки:** при невідомому `model_id` кидається `UnknownModelError` (підклас і `BillingError`, і `ValueError`) з переліком валідних моделей у повідомленні.
+
+**Повертає:** `CostBreakdown`.
 
 ---
 
@@ -151,19 +196,27 @@ cost = BillingClient.calculate_cost("gemini-2.5-flash", input_tokens=1000, think
 
 ## Моделі та ціни
 
-Вбудований прайс (USD за 1M токенів):
+Вбудований прайс (USD за 1M токенів, БЕЗ ПДВ). Дата звірки з docs провайдерів — у константі `MODEL_PRICING_VERIFIED_AT`.
 
-| Модель | Input | Output | Thinking Output | Провайдер |
-|--------|------:|-------:|----------------:|-----------|
-| `gpt-4o-mini` | $0.15 | $0.60 | — | OpenAI |
-| `gpt-4.1-mini` | $0.10 | $0.40 | — | OpenAI |
-| `gpt-4.1-nano` | $0.10 | $0.40 | — | OpenAI |
-| `gpt-5-nano` | $0.05 | $0.40 | — | OpenAI |
-| `gpt-4` | $30.00 | $60.00 | — | OpenAI |
-| `text-embedding-3-small` | $0.02 | $0.00 | — | OpenAI |
-| `gemini-2.5-flash` | $0.15 | $0.60 | $3.50 | Google |
-| `gemini-1.5-flash` | $0.075 | $0.30 | — | Google |
-| `claude-sonnet-4-5-20250929` | $3.00 | $15.00 | — | Anthropic |
+| Модель | Input | Output | Thinking | Cache Read | Cache Write | Провайдер |
+|--------|------:|-------:|---------:|-----------:|------------:|-----------|
+| `gpt-4o` | $2.50 | $10.00 | — | — | — | OpenAI |
+| `gpt-4o-mini` | $0.15 | $0.60 | — | — | — | OpenAI |
+| `gpt-4.1-mini` | $0.40 | $1.60 | — | — | — | OpenAI |
+| `gpt-4.1-nano` | $0.10 | $0.40 | — | — | — | OpenAI |
+| `gpt-5-mini` | $0.25 | $2.00 | — | — | — | OpenAI |
+| `gpt-5-nano` | $0.05 | $0.40 | — | — | — | OpenAI |
+| `gpt-4` | $30.00 | $60.00 | — | — | — | OpenAI |
+| `text-embedding-3-small` | $0.02 | $0.00 | — | — | — | OpenAI |
+| `gemini-3-flash` | $0.10 | $0.40 | — | — | — | Google |
+| `gemini-2.5-flash` | $0.30 | $2.50 | $2.50 | — | — | Google |
+| `gemini-2.0-flash` | $0.10 | $0.40 | — | — | — | Google |
+| `gemini-1.5-flash` | $0.075 | $0.30 | — | — | — | Google |
+| `claude-sonnet-4-5-20250929` | $3.00 | $15.00 | — | $0.30 | $3.75 | Anthropic |
+| `claude-sonnet-4-6` | $3.00 | $15.00 | — | $0.30 | $3.75 | Anthropic |
+| `claude-haiku-4-5` | $1.00 | $5.00 | — | $0.10 | $1.25 | Anthropic |
+
+Anthropic `cache_write` — це 5-хвилинний cache write (1.25× базової input-ціни). 1-годинний (2×) поки не моделюємо.
 
 ### Prefix matching
 
@@ -241,6 +294,34 @@ class UsageInfo(BaseModel):
     cost_usd: Decimal             # Decimal('0.000195')
 ```
 
+### `Usage`
+
+Вхід для `calculate_cost(model_id, usage)`. Заморожений dataclass — для in-memory cost calculation.
+
+```python
+@dataclass(frozen=True, slots=True)
+class Usage:
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int = 0   # Anthropic prompt cache read
+    cache_write_tokens: int = 0    # Anthropic prompt cache write
+```
+
+Не містить `thinking_output_tokens` — для Gemini thinking використовуйте `BillingClient.calculate_cost(...)` зі старим API.
+
+### `CostBreakdown`
+
+Результат `calculate_cost(model_id, usage)`. Усі суми у USD, квантовані до 6 знаків після коми.
+
+```python
+@dataclass(frozen=True, slots=True)
+class CostBreakdown:
+    cost_no_vat: Decimal                    # сума 4 компонентів
+    vat: Decimal                            # cost_no_vat * (VAT_MULTIPLIER - 1)
+    cost_total: Decimal                     # cost_no_vat + vat
+    by_component: dict[str, Decimal]        # {input, output, cache_read, cache_write}
+```
+
 ### `BalanceInfo`
 
 Результат `check_balance()`:
@@ -275,7 +356,7 @@ class DebitPayload(BaseModel):
 |------|--------|------|
 | `BillingError` | `Exception` | Базовий для всіх |
 | `ParseError` | `BillingError` | Не вдалося визначити провайдера або витягнути usage |
-| `UnknownModelError` | `BillingError` | Модель відсутня у прайсі |
+| `UnknownModelError` | `BillingError`, `ValueError` | Модель відсутня у прайсі. Multi-inheritance — ловиться як `BillingError` (legacy) і як `ValueError` (per ARCHITECTURE.md §7.3) |
 
 При `fail_silently=True` (за замовчуванням) винятки логуються через `logging.getLogger("ai_billing")` і не пробрасываються далі — billing ніколи не ламає основну AI-операцію.
 
@@ -360,17 +441,22 @@ billing/
 ├── src/
 │   └── ai_billing/
 │       ├── __init__.py          # Публічний API
-│       ├── _version.py          # "0.1.0"
+│       ├── _version.py          # "0.4.0"
 │       ├── client.py            # BillingClient
-│       ├── pricing.py           # MODEL_PRICING + calculate_cost
+│       ├── pricing.py           # MODEL_PRICING + calculate_cost (cache+VAT) + _calculate_cost_legacy
 │       ├── parsers.py           # Автодетекція OpenAI/Anthropic/Gemini
+│       ├── http_transport.py    # HTTP fallback для check_balance
 │       ├── redis_transport.py   # Async Redis writer (pipeline)
-│       ├── schemas.py           # UsageInfo, DebitPayload
+│       ├── schemas.py           # Usage, CostBreakdown, UsageInfo, BalanceInfo, DebitPayload
 │       └── exceptions.py        # BillingError, ParseError, UnknownModelError
 └── tests/
     ├── conftest.py
     ├── test_client.py
     ├── test_parsers.py
     ├── test_pricing.py
+    ├── test_model_pricing.py    # Snapshot цін (захист від silent change)
+    ├── test_calculate_cost.py   # VAT, components, overflow, ValueError
+    ├── test_schemas.py
+    ├── test_http_transport.py
     └── test_redis_transport.py
 ```

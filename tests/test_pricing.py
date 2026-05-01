@@ -1,8 +1,17 @@
+import re
 from decimal import Decimal
 
 import pytest
 
-from ai_billing.pricing import calculate_cost, resolve_model
+from ai_billing.pricing import (
+    MODEL_PRICING,
+    MODEL_PRICING_VERIFIED_AT,
+    _calculate_cost_legacy,
+    calculate_cost,
+    get_vat_multiplier,
+    resolve_model,
+)
+from ai_billing.schemas import Usage
 from ai_billing.exceptions import UnknownModelError
 
 
@@ -27,24 +36,29 @@ class TestResolveModel:
             resolve_model("unknown-model-xyz")
 
 
-class TestCalculateCost:
+class TestCalculateCostLegacy:
+    """Internal legacy token-based calc — Decimal, no VAT, no cache.
+
+    Used by parsers.py and BillingClient.calculate_cost facade.
+    """
+
     def test_gpt4o_mini_1m_input(self):
-        cost = calculate_cost("gpt-4o-mini", input_tokens=1_000_000)
+        cost = _calculate_cost_legacy("gpt-4o-mini", input_tokens=1_000_000)
         assert cost == Decimal("0.15")
 
     def test_gpt4o_mini_1m_output(self):
-        cost = calculate_cost("gpt-4o-mini", output_tokens=1_000_000)
+        cost = _calculate_cost_legacy("gpt-4o-mini", output_tokens=1_000_000)
         assert cost == Decimal("0.60")
 
     def test_mixed_tokens(self):
-        cost = calculate_cost("gpt-4o-mini", input_tokens=500, output_tokens=200)
+        cost = _calculate_cost_legacy("gpt-4o-mini", input_tokens=500, output_tokens=200)
         # input: 0.15 * 500 / 1M = 0.000075
         # output: 0.60 * 200 / 1M = 0.00012
         # total = 0.000195
         assert cost == Decimal("0.000195")
 
     def test_gemini_thinking_tokens(self):
-        cost = calculate_cost(
+        cost = _calculate_cost_legacy(
             "gemini-2.5-flash",
             input_tokens=1_000_000,
             output_tokens=0,
@@ -54,14 +68,156 @@ class TestCalculateCost:
         assert cost == Decimal("2.800000")
 
     def test_zero_tokens(self):
-        cost = calculate_cost("gpt-4o-mini")
+        cost = _calculate_cost_legacy("gpt-4o-mini")
         assert cost == Decimal("0")
 
     def test_embedding_no_output_cost(self):
-        cost = calculate_cost("text-embedding-3-small", input_tokens=1_000_000, output_tokens=1_000_000)
+        cost = _calculate_cost_legacy("text-embedding-3-small", input_tokens=1_000_000, output_tokens=1_000_000)
         # output price is 0
         assert cost == Decimal("0.02")
 
     def test_prefix_versioned_model(self):
-        cost = calculate_cost("gpt-5-nano-2025-08-07", input_tokens=1_000_000)
+        cost = _calculate_cost_legacy("gpt-5-nano-2025-08-07", input_tokens=1_000_000)
         assert cost == Decimal("0.05")
+
+
+class TestModelPriceCachePricing:
+    """Anthropic prompt caching pricing — added 2026-04-29."""
+
+    def test_haiku_4_5_present_with_full_cache_pricing(self):
+        haiku = MODEL_PRICING["claude-haiku-4-5"]
+        assert haiku.input == Decimal("1.00")
+        assert haiku.output == Decimal("5.00")
+        assert haiku.cache_read == Decimal("0.10")
+        assert haiku.cache_write == Decimal("1.25")
+        assert haiku.provider == "anthropic"
+
+    def test_sonnet_4_6_has_cache_pricing(self):
+        sonnet = MODEL_PRICING["claude-sonnet-4-6"]
+        assert sonnet.cache_read == Decimal("0.30")
+        assert sonnet.cache_write == Decimal("3.75")
+
+    def test_sonnet_4_5_has_cache_pricing(self):
+        sonnet = MODEL_PRICING["claude-sonnet-4-5-20250929"]
+        assert sonnet.cache_read == Decimal("0.30")
+        assert sonnet.cache_write == Decimal("3.75")
+
+    def test_openai_models_default_zero_cache(self):
+        gpt = MODEL_PRICING["gpt-4o"]
+        assert gpt.cache_read == Decimal("0")
+        assert gpt.cache_write == Decimal("0")
+
+    def test_gemini_models_default_zero_cache(self):
+        gemini = MODEL_PRICING["gemini-2.5-flash"]
+        assert gemini.cache_read == Decimal("0")
+        assert gemini.cache_write == Decimal("0")
+
+
+class TestModelPricingVerifiedAt:
+    def test_is_string(self):
+        assert isinstance(MODEL_PRICING_VERIFIED_AT, str)
+
+    def test_format_yyyy_mm_dd(self):
+        assert re.match(r"^\d{4}-\d{2}-\d{2}$", MODEL_PRICING_VERIFIED_AT)
+
+
+class TestVatMultiplier:
+    def test_default_120_when_env_unset(self, monkeypatch):
+        monkeypatch.delenv("VAT_MULTIPLIER", raising=False)
+        assert get_vat_multiplier() == Decimal("1.20")
+
+    def test_get_vat_reads_env_at_call_time(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.50")
+        assert get_vat_multiplier() == Decimal("1.50")
+
+        monkeypatch.setenv("VAT_MULTIPLIER", "0.00")
+        assert get_vat_multiplier() == Decimal("0.00")
+
+    def test_get_vat_zero_vat_country(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
+        assert get_vat_multiplier() == Decimal("1.00")
+
+
+class TestCalculateCost:
+    """Public calculate_cost(model_id, usage) -> CostBreakdown (ARCHITECTURE.md §7.3)."""
+
+    def test_haiku_no_cache(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.20")
+        usage = Usage(input_tokens=1_000_000, output_tokens=1_000_000)
+        cb = calculate_cost("claude-haiku-4-5", usage)
+        # Haiku $1/$5 input/output → 1 + 5 = 6 cost_no_vat
+        assert cb.by_component["input"] == Decimal("1.000000")
+        assert cb.by_component["output"] == Decimal("5.000000")
+        assert cb.by_component["cache_read"] == Decimal("0")
+        assert cb.by_component["cache_write"] == Decimal("0")
+        assert cb.cost_no_vat == Decimal("6.000000")
+        # VAT 20% → vat = 1.20, total = 7.20
+        assert cb.vat == Decimal("1.200000")
+        assert cb.cost_total == Decimal("7.200000")
+
+    def test_haiku_full_cache(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.20")
+        # 1M of each: input=$1, output=$5, cache_read=$0.10, cache_write=$1.25
+        usage = Usage(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cached_input_tokens=1_000_000,
+            cache_write_tokens=1_000_000,
+        )
+        cb = calculate_cost("claude-haiku-4-5", usage)
+        assert cb.by_component["cache_read"] == Decimal("0.100000")
+        assert cb.by_component["cache_write"] == Decimal("1.250000")
+        assert cb.cost_no_vat == Decimal("7.350000")  # 1+5+0.10+1.25
+        # VAT 20% → 7.35 * 1.20 = 8.82
+        assert cb.cost_total == Decimal("8.820000")
+
+    def test_openai_silent_zero_cache(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.20")
+        # gpt-4o has no cache pricing — cache tokens silently cost 0
+        usage = Usage(
+            input_tokens=1_000_000,
+            output_tokens=0,
+            cached_input_tokens=500_000,
+            cache_write_tokens=500_000,
+        )
+        cb = calculate_cost("gpt-4o", usage)
+        assert cb.by_component["cache_read"] == Decimal("0")
+        assert cb.by_component["cache_write"] == Decimal("0")
+        # Тільки input ($2.50)
+        assert cb.cost_no_vat == Decimal("2.500000")
+
+    def test_breakdown_with_env_vat_changed(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.50")
+        usage = Usage(input_tokens=1_000_000, output_tokens=0)
+        cb = calculate_cost("claude-haiku-4-5", usage)
+        # Input only: $1 cost_no_vat
+        # VAT 50%: vat = 0.50, total = 1.50
+        assert cb.cost_no_vat == Decimal("1.000000")
+        assert cb.vat == Decimal("0.500000")
+        assert cb.cost_total == Decimal("1.500000")
+
+    def test_breakdown_zero_vat(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
+        usage = Usage(input_tokens=1_000_000, output_tokens=1_000_000)
+        cb = calculate_cost("claude-haiku-4-5", usage)
+        assert cb.cost_no_vat == Decimal("6.000000")
+        assert cb.vat == Decimal("0.000000")
+        assert cb.cost_total == Decimal("6.000000")
+
+    def test_unknown_model_raises_value_error_with_valid_list(self):
+        usage = Usage(input_tokens=100, output_tokens=50)
+        # ARCHITECTURE.md §7.3 contract: raise ValueError on unknown model_id.
+        # UnknownModelError is a subclass of ValueError, so both catch types work.
+        with pytest.raises(ValueError) as exc_info:
+            calculate_cost("nonexistent-model-xyz", usage)
+        msg = str(exc_info.value)
+        assert "nonexistent-model-xyz" in msg
+        assert "Valid models" in msg
+        # Sanity: at least one real model id is in the message
+        assert "claude-haiku-4-5" in msg
+
+    def test_unknown_model_also_unknown_model_error(self):
+        # Backward-compat: existing callers that catch UnknownModelError still work.
+        usage = Usage(input_tokens=100, output_tokens=50)
+        with pytest.raises(UnknownModelError):
+            calculate_cost("nonexistent-model-xyz", usage)

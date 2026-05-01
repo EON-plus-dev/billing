@@ -4,7 +4,7 @@ from typing import Any
 
 from .exceptions import ParseError
 from .schemas import UsageInfo
-from .pricing import calculate_cost
+from .pricing import _calculate_cost_legacy as calculate_cost
 
 
 def _safe_getattr(obj: Any, *attrs: str) -> Any:

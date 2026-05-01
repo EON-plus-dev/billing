@@ -6,7 +6,6 @@ from .pricing import (
     MODEL_PRICING_VERIFIED_AT,
     VAT_MULTIPLIER,
     calculate_cost,
-    calculate_cost_breakdown,
     get_vat_multiplier,
 )
 from .schemas import BalanceInfo, CostBreakdown, DebitPayload, Usage, UsageInfo
@@ -22,7 +21,6 @@ __all__ = [
     "MODEL_PRICING_VERIFIED_AT",
     "VAT_MULTIPLIER",
     "calculate_cost",
-    "calculate_cost_breakdown",
     "get_vat_multiplier",
     "BalanceInfo",
     "CostBreakdown",

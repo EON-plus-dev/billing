@@ -109,16 +109,27 @@ def resolve_model(model: str) -> tuple[str, ModelPrice]:
     for prefix in _SORTED_PREFIXES:
         if model.startswith(prefix):
             return prefix, MODEL_PRICING[prefix]
-    raise UnknownModelError(f"Unknown model: {model!r}")
+    raise UnknownModelError(
+        f"Unknown model: {model!r}. "
+        f"Valid models: {sorted(MODEL_PRICING.keys())}"
+    )
 
 
-def calculate_cost(
+def _calculate_cost_legacy(
     model: str,
     input_tokens: int = 0,
     output_tokens: int = 0,
     thinking_output_tokens: int = 0,
 ) -> Decimal:
-    """Calculate cost in USD for the given token counts."""
+    """Legacy positional-token cost calc — Decimal USD, no VAT, no cache.
+
+    Kept for parsers.py (Anthropic/OpenAI/Gemini response parsers that emit
+    UsageInfo.cost_usd: Decimal) and BillingClient.calculate_cost facade.
+    Note: keeps thinking_output_tokens support for Gemini, which is absent
+    from the new Usage dataclass.
+
+    For new code use the public calculate_cost(model_id, usage) -> CostBreakdown.
+    """
     _, price = resolve_model(model)
     cost = (
         price.input * input_tokens
@@ -128,16 +139,23 @@ def calculate_cost(
     return cost.quantize(Decimal("0.000001"))
 
 
-def calculate_cost_breakdown(model: str, usage: Usage) -> CostBreakdown:
-    """Calculate cost breakdown with per-component split and VAT.
+def calculate_cost(model_id: str, usage: Usage) -> CostBreakdown:
+    """Calculate per-component cost breakdown with VAT (ARCHITECTURE.md §7.3).
+
+    Components: input, output, cache_read, cache_write — each
+    usage_tokens * price / 1_000_000. cost_no_vat = sum(components);
+    vat = cost_no_vat * (VAT_MULTIPLIER - 1); cost_total = cost_no_vat + vat.
+    All amounts quantized to 6 decimal places (USD).
 
     For models without cache_read/cache_write pricing (e.g. OpenAI),
     cache components silently return Decimal("0") even if usage carries
     cache tokens — matches the fail-silent style of the rest of the lib.
 
-    Returns CostBreakdown with all amounts quantized to 6 decimal places.
+    Raises:
+        UnknownModelError (also a ValueError) if model_id is not in
+        MODEL_PRICING. Message includes the list of valid model ids.
     """
-    _, price = resolve_model(model)
+    _, price = resolve_model(model_id)
 
     q = Decimal("0.000001")
     by_component: dict[str, Decimal] = {

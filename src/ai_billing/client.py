@@ -42,11 +42,26 @@ class BillingClient:
         organization_id: int,
         user_id: int,
         model_override: str | None = None,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
     ) -> UsageInfo | None:
-        """Auto-detect AI response, calculate cost, write debit."""
+        """Auto-detect AI response, calculate cost, write debit.
+
+        v0.5.0: parsed token counts + model автоматично передаються у
+        credit_system FIFO context (через DebitPayload).
+        """
         try:
             usage = parse_response(response, model_override=model_override)
-            await self._write(usage.cost_usd, organization_id, user_id)
+            await self._write(
+                usage.cost_usd,
+                organization_id,
+                user_id,
+                model_id=usage.model,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                feature_type=feature_type,
+                caller_user_role=caller_user_role,
+            )
             return usage
         except Exception:
             if not self._fail_silently:
@@ -61,10 +76,19 @@ class BillingClient:
         input_tokens: int = 0,
         output_tokens: int = 0,
         thinking_output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        cache_write_tokens: int = 0,
         organization_id: int,
         user_id: int,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
     ) -> UsageInfo | None:
-        """Calculate cost from token counts and write debit."""
+        """Calculate cost from token counts and write debit.
+
+        v0.5.0: cached_input_tokens / cache_write_tokens (Anthropic prompt cache)
+        + feature_type + caller_user_role передаються у credit_system FIFO
+        context для запису в ai_usage_events.
+        """
         try:
             cost = _calculate_cost(
                 model,
@@ -73,8 +97,9 @@ class BillingClient:
                 thinking_output_tokens=thinking_output_tokens,
             )
             logger.info(
-                "ai_billing: report_tokens cost=%s model=%s in=%d out=%d org=%d",
-                cost, model, input_tokens, output_tokens, organization_id,
+                "ai_billing: report_tokens cost=%s model=%s in=%d out=%d cache_r=%d cache_w=%d org=%d",
+                cost, model, input_tokens, output_tokens,
+                cached_input_tokens, cache_write_tokens, organization_id,
             )
             usage = UsageInfo(
                 model=model,
@@ -83,7 +108,18 @@ class BillingClient:
                 thinking_output_tokens=thinking_output_tokens,
                 cost_usd=cost,
             )
-            await self._write(cost, organization_id, user_id)
+            await self._write(
+                cost,
+                organization_id,
+                user_id,
+                model_id=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_write_tokens=cache_write_tokens,
+                feature_type=feature_type,
+                caller_user_role=caller_user_role,
+            )
             logger.info("ai_billing: report_tokens write OK org=%d", organization_id)
             return usage
         except Exception:
@@ -98,10 +134,34 @@ class BillingClient:
         *,
         organization_id: int,
         user_id: int,
+        model_id: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
     ) -> None:
-        """Write a debit with a pre-calculated cost."""
+        """Write a debit with a pre-calculated cost.
+
+        v0.5.0: optional model_id + token counts + feature_type +
+        caller_user_role — для credit_system FIFO ai_usage_events. Якщо
+        caller передає тільки cost_usd (legacy v0.4.0 контракт) — поведінка
+        не змінюється, FIFO пропустить ai_usage_events INSERT.
+        """
         try:
-            await self._write(Decimal(str(cost_usd)), organization_id, user_id)
+            await self._write(
+                Decimal(str(cost_usd)),
+                organization_id,
+                user_id,
+                model_id=model_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_write_tokens=cache_write_tokens,
+                feature_type=feature_type,
+                caller_user_role=caller_user_role,
+            )
         except Exception:
             if not self._fail_silently:
                 raise
@@ -147,9 +207,16 @@ class BillingClient:
         input_tokens: int = 0,
         output_tokens: int = 0,
         thinking_output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        cache_write_tokens: int = 0,
         user_id: int,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
     ) -> UsageInfo | None:
-        """Calculate cost from token counts and write debit for a user (no org)."""
+        """Calculate cost from token counts and write debit for a user (no org).
+
+        v0.5.0: see report_tokens() for new context-fields semantics.
+        """
         try:
             cost = _calculate_cost(
                 model,
@@ -158,8 +225,9 @@ class BillingClient:
                 thinking_output_tokens=thinking_output_tokens,
             )
             logger.info(
-                "ai_billing: report_tokens_by_user cost=%s model=%s in=%d out=%d user=%d",
-                cost, model, input_tokens, output_tokens, user_id,
+                "ai_billing: report_tokens_by_user cost=%s model=%s in=%d out=%d cache_r=%d cache_w=%d user=%d",
+                cost, model, input_tokens, output_tokens,
+                cached_input_tokens, cache_write_tokens, user_id,
             )
             usage = UsageInfo(
                 model=model,
@@ -168,7 +236,17 @@ class BillingClient:
                 thinking_output_tokens=thinking_output_tokens,
                 cost_usd=cost,
             )
-            await self._write_by_user(cost, user_id)
+            await self._write_by_user(
+                cost,
+                user_id,
+                model_id=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_write_tokens=cache_write_tokens,
+                feature_type=feature_type,
+                caller_user_role=caller_user_role,
+            )
             logger.info("ai_billing: report_tokens_by_user write OK user=%d", user_id)
             return usage
         except Exception:
@@ -182,10 +260,30 @@ class BillingClient:
         cost_usd: float | Decimal,
         *,
         user_id: int,
+        model_id: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
     ) -> None:
-        """Write a debit with a pre-calculated cost for a user (no org)."""
+        """Write a debit with a pre-calculated cost for a user (no org).
+
+        v0.5.0: see report_cost() for new context-fields semantics.
+        """
         try:
-            await self._write_by_user(Decimal(str(cost_usd)), user_id)
+            await self._write_by_user(
+                Decimal(str(cost_usd)),
+                user_id,
+                model_id=model_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_write_tokens=cache_write_tokens,
+                feature_type=feature_type,
+                caller_user_role=caller_user_role,
+            )
         except Exception:
             if not self._fail_silently:
                 raise
@@ -242,20 +340,59 @@ class BillingClient:
 
     # -- internals ---------------------------------------------------------
 
-    async def _write(self, cost_usd: Decimal, organization_id: int, user_id: int) -> None:
+    async def _write(
+        self,
+        cost_usd: Decimal,
+        organization_id: int,
+        user_id: int,
+        *,
+        model_id: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
+    ) -> None:
         payload = DebitPayload(
             organization_id=organization_id,
             amount_usd=cost_usd,
             service=self._service_name,
             user_id=user_id,
+            model_id=model_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_tokens=cache_write_tokens,
+            feature_type=feature_type,
+            caller_user_role=caller_user_role,
         )
         await self._transport.write_debit(payload)
 
-    async def _write_by_user(self, cost_usd: Decimal, user_id: int) -> None:
+    async def _write_by_user(
+        self,
+        cost_usd: Decimal,
+        user_id: int,
+        *,
+        model_id: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
+    ) -> None:
         payload = DebitPayload(
             organization_id=None,
             amount_usd=cost_usd,
             service=self._service_name,
             user_id=user_id,
+            model_id=model_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_tokens=cache_write_tokens,
+            feature_type=feature_type,
+            caller_user_role=caller_user_role,
         )
         await self._transport.write_debit(payload)

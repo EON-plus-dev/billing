@@ -61,9 +61,38 @@ class BalanceInfo(BaseModel):
 
 
 class DebitPayload(BaseModel):
+    """Redis-payload для debit-задачі.
+
+    Базові поля (v0.4.0): organization_id, amount_usd, service, user_id,
+    operation_id, created_at — ідентифікують операцію + готовий cost.
+
+    Phase-3 FIFO context (v0.5.0+): опційні поля для запису в credit_system
+    `ai_usage_events` partitioned table та `credit_transactions.role_at_request`:
+      - model_id            — каноничне ім'я AI-моделі (claude-haiku-4-5, ...).
+      - input_tokens        — input usage tokens.
+      - output_tokens       — output usage tokens.
+      - cached_input_tokens — Anthropic prompt cache reads.
+      - cache_write_tokens  — Anthropic prompt cache writes (5-min cache).
+      - feature_type        — 'ai_chat' | 'document_generation' | 'analytics'.
+      - caller_user_role    — snapshot ролі юзера на момент запиту.
+
+    Усі context-поля nullable → backward-compat з v0.4.0 caller-ами, які їх
+    не передають. credit_system FIFO-flow: коли model_id IS NOT NULL — пише
+    повний рядок у ai_usage_events; інакше пропускає (legacy degradation).
+    """
+
     organization_id: int | None = None
     amount_usd: Decimal = Field(decimal_places=6)
     service: str
     user_id: int
     operation_id: str = Field(default_factory=lambda: uuid4().hex)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Phase-3 FIFO context (v0.5.0+).
+    model_id: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
+    feature_type: str | None = None
+    caller_user_role: str | None = None

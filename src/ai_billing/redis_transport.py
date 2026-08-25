@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 import json
 
 from .context_auth import execution_context_signature
+from .http_transport import BILLING_OPERATIONS
 from .schemas import BalanceInfo, DebitPayload
 
 if TYPE_CHECKING:
@@ -100,27 +101,45 @@ class RedisTransport:
         operation: str | None = None,
         feature_type: str | None = None,
     ) -> BalanceInfo | None:
-        """Read cached balance for an organization.
+        """Resolve an organization balance with the actor/action context.
 
-        On cache miss, falls back to HTTP if configured.
-        Returns None only if both Redis and HTTP fail.
+        ``credits:org:*`` is a legacy, organization-only cache and cannot
+        represent the actor, operation, entitlement, or resolved payer.  It
+        must therefore never answer an organization-scoped check: doing so
+        would let a stale entry bypass the Credit System resolver (including
+        after a refund).  Organization checks fail closed without a valid
+        actor/action context and otherwise use the signed HTTP contract.
+
+        The user-only API below intentionally retains its legacy cache path.
         """
-        redis = await self._get_redis()
-        raw = await redis.get(f"credits:org:{organization_id}")
-        if raw is not None:
-            data = json.loads(raw)
-            return BalanceInfo(organization_id=organization_id, **data)
-
-        if self._http_fallback is not None:
-            logger.info("ai_billing: Redis cache miss for org=%d, trying HTTP fallback", organization_id)
-            return await self._http_fallback.check_balance(
+        if (
+            actor_user_id is None
+            or actor_user_id <= 0
+            or operation not in BILLING_OPERATIONS
+        ):
+            logger.warning(
+                "ai_billing: refusing organization balance without actor/action context for org=%d",
                 organization_id,
-                actor_user_id=actor_user_id,
-                operation=operation,
-                feature_type=feature_type,
             )
+            return None
 
-        return None
+        if self._http_fallback is None:
+            logger.warning(
+                "ai_billing: refusing legacy organization cache without HTTP resolver for org=%d",
+                organization_id,
+            )
+            return None
+
+        logger.info(
+            "ai_billing: resolving organization balance via HTTP actor/action contract for org=%d",
+            organization_id,
+        )
+        return await self._http_fallback.check_balance(
+            organization_id,
+            actor_user_id=actor_user_id,
+            operation=operation,
+            feature_type=feature_type,
+        )
 
     async def read_balance_by_user(self, user_id: int) -> BalanceInfo | None:
         """Read cached balance for a user (no organization).

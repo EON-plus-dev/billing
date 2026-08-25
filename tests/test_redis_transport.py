@@ -1,12 +1,13 @@
 import json
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
 import pytest
 import fakeredis.aioredis
 
 from ai_billing.redis_transport import RedisTransport
 from ai_billing.context_auth import verify_execution_context_signature
-from ai_billing.schemas import BillingExecutionContextV1, DebitPayload
+from ai_billing.schemas import BalanceInfo, BillingExecutionContextV1, DebitPayload
 
 
 @pytest.fixture
@@ -148,7 +149,7 @@ class TestWriteDebit:
 
 
 class TestReadBalance:
-    async def test_returns_balance(self, transport):
+    async def test_legacy_org_cache_cannot_bypass_actor_or_refund_resolution(self, transport):
         await transport._redis.set(
             "credits:org:42",
             json.dumps({
@@ -159,13 +160,46 @@ class TestReadBalance:
                 "multiplier": "1.8",
             }),
         )
-        info = await transport.read_balance(42)
-        assert info is not None
-        assert info.organization_id == 42
-        assert info.balance == 50000
-        assert info.owner_id == 7
-        assert info.subscription_tier == "premium"
+        resolver = AsyncMock()
+        resolver.check_balance = AsyncMock(return_value=None)
+        transport._http_fallback = resolver
 
-    async def test_returns_none_on_miss(self, transport):
-        info = await transport.read_balance(999)
+        info = await transport.read_balance(
+            42, actor_user_id=17, operation="document_generation"
+        )
         assert info is None
+        resolver.check_balance.assert_awaited_once_with(
+            42, actor_user_id=17, operation="document_generation", feature_type=None
+        )
+
+    async def test_returns_authoritative_http_balance(self, transport):
+        resolver = AsyncMock()
+        resolver.check_balance = AsyncMock(
+            return_value=BalanceInfo(organization_id=42, balance=125)
+        )
+        transport._http_fallback = resolver
+
+        info = await transport.read_balance(42)
+        assert info is None
+        resolver.check_balance.assert_not_awaited()
+
+        info = await transport.read_balance(
+            42, actor_user_id=17, operation="document_generation"
+        )
+        assert info == BalanceInfo(organization_id=42, balance=125)
+        resolver.check_balance.assert_awaited_once_with(
+            42, actor_user_id=17, operation="document_generation", feature_type=None
+        )
+
+    async def test_missing_context_fails_closed_even_when_legacy_cache_exists(self, transport):
+        await transport._redis.set(
+            "credits:org:42",
+            json.dumps({"balance": 50000}),
+        )
+        resolver = AsyncMock()
+        resolver.check_balance = AsyncMock()
+        transport._http_fallback = resolver
+
+        info = await transport.read_balance(42)
+        assert info is None
+        resolver.check_balance.assert_not_awaited()

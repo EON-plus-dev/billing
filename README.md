@@ -15,14 +15,27 @@ pip install git+https://github.com/EON-plus-dev/billing.git
 ## Швидкий старт
 
 ```python
-from ai_billing import BillingClient
+from ai_billing import BillingClient, BillingExecutionContextV1
 
 billing = BillingClient(redis_url="redis://localhost:6380", service_name="ai_chat")
+
+context = BillingExecutionContextV1(
+    actor_user_id=456,  # authenticated user; for background — durable initiator
+    fop_organization_id=123,
+    source="ai_billing",
+    revision=1,
+    context_id="request:01JTEST",
+)
 
 # Перевірити баланс перед викликом AI
 if await billing.has_credits(organization_id=123):
     response = await openai_client.chat.completions.create(model="gpt-4o-mini", messages=[...])
-    await billing.report(response, organization_id=123, user_id=456)
+    await billing.report_v1(
+        response,
+        organization_id=123,
+        user_id=456,  # subject/legacy audit field, not authoritative actor
+        billing_execution_context=context,
+    )
 ```
 
 ## API
@@ -89,6 +102,46 @@ await billing.report_cost(0.0035, organization_id=123, user_id=456)
 ```
 
 **Повертає:** `None`
+
+---
+
+### Контекст виконання v1 для організаційних операцій
+
+Нові організаційні інтеграції повинні використовувати `report_v1`,
+`report_tokens_v1` або `report_cost_v1`. Ці методи вимагають
+`BillingExecutionContextV1`; поле `user_id` лишається legacy/audit і не є
+авторитетним actor.
+
+```python
+from ai_billing import BillingExecutionContextV1
+
+# Інтерактивний запит: actor_user_id походить із перевіреного backend/JWT.
+interactive = BillingExecutionContextV1(
+    actor_user_id=456,
+    fop_organization_id=123,
+    source="ai_billing",
+    revision=1,
+    context_id="request:01JTEST",
+)
+
+# Фонова операція: actor_user_id — збережений ініціатор налаштування.
+background = BillingExecutionContextV1(
+    actor_user_id=456,
+    fop_organization_id=123,
+    source="income_auto_sync",
+    revision=3,
+    context_id="auto-sync:organization:123",
+)
+```
+
+`organization_id` у debit payload залишається цільовим кабінетом і має
+збігатися з `fop_organization_id`; top-level `actor_user_id` автоматично
+дублює actor з envelope для сумісності зі споживачем. `context_id` — непрозорий
+ідентифікатор server-owned запису, а не підпис. `credit_system` повторно
+перевіряє `context_id + revision` у відповідному authoritative source і визначає
+актуальні відносини та стан оплати під час check/debit. Legacy організаційні
+методи тимчасово приймають optional `billing_execution_context` для rolling
+deployment; user-only API залишається без змін.
 
 ---
 

@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 
 import json
 
+from .context_auth import execution_context_signature
 from .schemas import BalanceInfo, DebitPayload
 
 if TYPE_CHECKING:
@@ -19,12 +20,27 @@ _DEBIT_TTL = 86400  # 24h
 
 
 class RedisTransport:
-    __slots__ = ("_url", "_redis", "_http_fallback")
+    __slots__ = (
+        "_url",
+        "_redis",
+        "_http_fallback",
+        "_context_secret",
+        "_context_issuer",
+    )
 
-    def __init__(self, redis_url: str, http_fallback: HttpTransport | None = None) -> None:
+    def __init__(
+        self,
+        redis_url: str,
+        http_fallback: HttpTransport | None = None,
+        *,
+        context_secret: str | None = None,
+        context_issuer: str | None = None,
+    ) -> None:
         self._url = redis_url
         self._redis: Redis | None = None
         self._http_fallback = http_fallback
+        self._context_secret = (context_secret or "").strip()
+        self._context_issuer = (context_issuer or "").strip()
 
     async def _get_redis(self) -> Redis:
         if self._redis is None:
@@ -35,8 +51,36 @@ class RedisTransport:
         """Write a debit task to Redis. Returns the operation_id."""
         redis = await self._get_redis()
         op_id = payload.operation_id or uuid4().hex
+        if payload.billing_execution_context is not None:
+            if not self._context_secret or not self._context_issuer:
+                raise RuntimeError("BILLING_CONTEXT_SIGNING_REQUIRED")
+            context_payload = payload.billing_execution_context.model_dump()
+            payload = payload.model_copy(
+                update={
+                    "context_issuer": self._context_issuer,
+                    "context_signature": execution_context_signature(
+                        secret=self._context_secret,
+                        issuer=self._context_issuer,
+                        operation_id=op_id,
+                        context=context_payload,
+                    ),
+                }
+            )
         key = f"debit:{op_id}"
-        data = payload.model_dump_json()
+        # Omit the v0.6.0 envelope for legacy producers so rolling deployments
+        # retain their previous wire shape. Context-aware payloads preserve the
+        # typed object verbatim as nested JSON.
+        exclude = (
+            {
+                "billing_execution_context",
+                "actor_user_id",
+                "context_issuer",
+                "context_signature",
+            }
+            if payload.billing_execution_context is None
+            else None
+        )
+        data = payload.model_dump_json(exclude=exclude)
         logger.info(
             "ai_billing: write_debit key=%s org=%s amount=%s service=%s",
             key, payload.organization_id, payload.amount_usd, payload.service,

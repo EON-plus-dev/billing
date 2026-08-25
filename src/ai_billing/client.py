@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from .exceptions import BillingError
-from .http_transport import HttpTransport
+from .http_transport import BILLING_OPERATIONS, HttpTransport
 from .parsers import parse_response
 from .pricing import _calculate_cost_legacy as _calculate_cost
 from .redis_transport import RedisTransport
@@ -265,28 +265,67 @@ class BillingClient:
             caller_user_role=caller_user_role,
         )
 
-    async def check_balance(self, organization_id: int) -> BalanceInfo | None:
+    async def check_balance(
+        self,
+        organization_id: int,
+        *,
+        actor_user_id: int | None = None,
+        operation: str | None = None,
+        feature_type: str | None = None,
+    ) -> BalanceInfo | None:
         """Read cached credit balance from Redis.
 
         Returns None if no cache entry exists (cache miss or expired).
         Note: cache may be up to 30 min stale.
         """
         try:
-            return await self._transport.read_balance(organization_id)
+            return await self._transport.read_balance(
+                organization_id,
+                actor_user_id=actor_user_id,
+                operation=operation,
+                feature_type=feature_type,
+            )
         except Exception:
             if not self._fail_silently:
                 raise
             logger.exception("ai_billing: check_balance() failed")
             return None
 
-    async def has_credits(self, organization_id: int) -> bool:
+    async def has_credits(
+        self,
+        organization_id: int,
+        *,
+        actor_user_id: int | None = None,
+        operation: str | None = None,
+        feature_type: str | None = None,
+    ) -> bool:
         """Quick check: does the organization have a positive credit balance?
 
         When fail_silently=False and balance cannot be determined, raises
         RuntimeError so the caller can block the operation.
         When fail_silently=True, returns True (fail-open) for backwards compatibility.
         """
-        balance = await self.check_balance(organization_id)
+        # Actor/action context is mandatory for organization-scoped checks.
+        # Do not apply the legacy fail-open behavior to an untrusted or missing
+        # context: that would allow a caller to proceed after an HTTP fallback
+        # was correctly rejected by Credit System's role gate.
+        if (
+            actor_user_id is None
+            or actor_user_id <= 0
+            or operation not in BILLING_OPERATIONS
+        ):
+            logger.warning(
+                "ai_billing: has_credits() refused without valid actor/action context for org=%d",
+                organization_id,
+            )
+            return False
+
+        balance = await self.check_balance(
+            organization_id,
+            actor_user_id=actor_user_id,
+            operation=operation,
+            feature_type=feature_type,
+        )
         if balance is None:
             if not self._fail_silently:
                 raise RuntimeError(

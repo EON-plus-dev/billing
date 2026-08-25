@@ -21,22 +21,23 @@ class TestGetToken:
     def test_generates_valid_jwt(self, transport):
         import jwt
 
-        token = transport._get_token()
+        token = transport._get_token(42)
         payload = jwt.decode(token, "super-secret-key-for-testing-1234", algorithms=["HS256"])
         assert payload["sub"] == "test_svc"
         assert payload["type"] == "internal_service"
+        assert payload["actor_user_id"] == 42
         assert payload["exp"] > time.time()
 
     def test_caches_token(self, transport):
-        token1 = transport._get_token()
-        token2 = transport._get_token()
+        token1 = transport._get_token(42)
+        token2 = transport._get_token(42)
         assert token1 is token2
 
     def test_refreshes_expired_token(self, transport):
-        token1 = transport._get_token()
+        token1 = transport._get_token(42)
         # Simulate token about to expire (within refresh margin)
         transport._token_expires_at = time.time() + 30  # < 60s margin
-        token2 = transport._get_token()
+        token2 = transport._get_token(42)
         assert token1 is not token2
 
 
@@ -51,7 +52,9 @@ class TestCheckBalance:
         mock_session.closed = False
         transport._session = mock_session
 
-        result = await transport.check_balance(organization_id=42)
+        result = await transport.check_balance(
+            organization_id=42, actor_user_id=77, operation="document_generation"
+        )
 
         assert result is not None
         assert result.organization_id == 42
@@ -60,7 +63,40 @@ class TestCheckBalance:
         mock_session.post.assert_awaited_once()
         call_kwargs = mock_session.post.call_args
         assert "/internal/check-balance" in call_kwargs.args[0]
-        assert call_kwargs.kwargs["json"] == {"organization_id": 42, "required_credits": 0}
+        assert call_kwargs.kwargs["json"] == {
+            "organization_id": 42,
+            "user_id": 77,
+            "actor_user_id": 77,
+            "operation": "document_generation",
+            "required_credits": 0,
+        }
+
+        import jwt
+
+        token_payload = jwt.decode(
+            call_kwargs.kwargs["headers"]["Authorization"].removeprefix("Bearer "),
+            "super-secret-key-for-testing-1234",
+            algorithms=["HS256"],
+        )
+        assert token_payload["actor_user_id"] == 77
+
+    async def test_missing_actor_or_operation_fails_closed_without_http(self, transport):
+        mock_session = AsyncMock()
+        mock_session.post = AsyncMock()
+        mock_session.closed = False
+        transport._session = mock_session
+
+        assert await transport.check_balance(organization_id=42) is None
+        assert await transport.check_balance(organization_id=42, actor_user_id=77) is None
+        assert (
+            await transport.check_balance(
+                organization_id=42,
+                actor_user_id=77,
+                operation="untrusted_operation",
+            )
+            is None
+        )
+        mock_session.post.assert_not_awaited()
 
     async def test_non_200_returns_none(self, transport):
         mock_resp = AsyncMock()
@@ -71,7 +107,9 @@ class TestCheckBalance:
         mock_session.closed = False
         transport._session = mock_session
 
-        result = await transport.check_balance(organization_id=999)
+        result = await transport.check_balance(
+            organization_id=999, actor_user_id=77, operation="document_generation"
+        )
         assert result is None
 
     async def test_network_error_returns_none(self, transport):
@@ -80,7 +118,9 @@ class TestCheckBalance:
         mock_session.closed = False
         transport._session = mock_session
 
-        result = await transport.check_balance(organization_id=42)
+        result = await transport.check_balance(
+            organization_id=42, actor_user_id=77, operation="document_generation"
+        )
         assert result is None
 
     async def test_timeout_returns_none(self, transport):
@@ -91,7 +131,9 @@ class TestCheckBalance:
         mock_session.closed = False
         transport._session = mock_session
 
-        result = await transport.check_balance(organization_id=42)
+        result = await transport.check_balance(
+            organization_id=42, actor_user_id=77, operation="document_generation"
+        )
         assert result is None
 
 

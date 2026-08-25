@@ -225,21 +225,57 @@ class TestCheckBalance:
 
 
 class TestHasCredits:
+    async def test_missing_or_invalid_context_fails_closed_even_when_fail_open(self, client):
+        client._transport.read_balance = AsyncMock(
+            side_effect=AssertionError("must not read without context")
+        )
+
+        assert await client.has_credits(organization_id=1) is False
+        assert (
+            await client.has_credits(
+                organization_id=1,
+                actor_user_id=7,
+                operation="untrusted_operation",
+            )
+            is False
+        )
+
     async def test_positive_balance(self, client):
         client._transport.read_balance = AsyncMock(
             return_value=BalanceInfo(organization_id=1, balance=100)
         )
-        assert await client.has_credits(organization_id=1) is True
+        assert (
+            await client.has_credits(
+                organization_id=1,
+                actor_user_id=7,
+                operation="document_generation",
+            )
+            is True
+        )
 
     async def test_zero_balance(self, client):
         client._transport.read_balance = AsyncMock(
             return_value=BalanceInfo(organization_id=1, balance=0)
         )
-        assert await client.has_credits(organization_id=1) is False
+        assert (
+            await client.has_credits(
+                organization_id=1,
+                actor_user_id=7,
+                operation="document_generation",
+            )
+            is False
+        )
 
     async def test_cache_miss_fail_open(self, client):
         client._transport.read_balance = AsyncMock(return_value=None)
-        assert await client.has_credits(organization_id=1) is True
+        assert (
+            await client.has_credits(
+                organization_id=1,
+                actor_user_id=7,
+                operation="document_generation",
+            )
+            is True
+        )
 
 
 class TestCalculateCost:

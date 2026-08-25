@@ -92,7 +92,14 @@ class RedisTransport:
         logger.info("ai_billing: write_debit OK op=%s pipeline_result=%s", op_id, result)
         return op_id
 
-    async def read_balance(self, organization_id: int) -> BalanceInfo | None:
+    async def read_balance(
+        self,
+        organization_id: int,
+        *,
+        actor_user_id: int | None = None,
+        operation: str | None = None,
+        feature_type: str | None = None,
+    ) -> BalanceInfo | None:
         """Read cached balance for an organization.
 
         On cache miss, falls back to HTTP if configured.
@@ -106,7 +113,12 @@ class RedisTransport:
 
         if self._http_fallback is not None:
             logger.info("ai_billing: Redis cache miss for org=%d, trying HTTP fallback", organization_id)
-            return await self._http_fallback.check_balance(organization_id)
+            return await self._http_fallback.check_balance(
+                organization_id,
+                actor_user_id=actor_user_id,
+                operation=operation,
+                feature_type=feature_type,
+            )
 
         return None
 

@@ -5,11 +5,16 @@ from decimal import Decimal
 from typing import Any
 
 from .exceptions import BillingError
-from .http_transport import HttpTransport
+from .http_transport import BILLING_OPERATIONS, HttpTransport
 from .parsers import parse_response
 from .pricing import _calculate_cost_legacy as _calculate_cost
 from .redis_transport import RedisTransport
-from .schemas import BalanceInfo, DebitPayload, UsageInfo
+from .schemas import (
+    BalanceInfo,
+    BillingExecutionContextV1,
+    DebitPayload,
+    UsageInfo,
+)
 
 logger = logging.getLogger("ai_billing")
 
@@ -29,7 +34,12 @@ class BillingClient:
         http_fallback = None
         if credit_system_url and secret_key:
             http_fallback = HttpTransport(credit_system_url, service_name, secret_key)
-        self._transport = RedisTransport(redis_url, http_fallback=http_fallback)
+        self._transport = RedisTransport(
+            redis_url,
+            http_fallback=http_fallback,
+            context_secret=secret_key,
+            context_issuer=service_name,
+        )
         self._service_name = service_name
         self._fail_silently = fail_silently
 
@@ -44,6 +54,7 @@ class BillingClient:
         model_override: str | None = None,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        billing_execution_context: BillingExecutionContextV1 | None = None,
     ) -> UsageInfo | None:
         """Auto-detect AI response, calculate cost, write debit.
 
@@ -61,6 +72,7 @@ class BillingClient:
                 output_tokens=usage.output_tokens,
                 feature_type=feature_type,
                 caller_user_role=caller_user_role,
+                billing_execution_context=billing_execution_context,
             )
             return usage
         except Exception:
@@ -82,6 +94,7 @@ class BillingClient:
         user_id: int,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        billing_execution_context: BillingExecutionContextV1 | None = None,
     ) -> UsageInfo | None:
         """Calculate cost from token counts and write debit.
 
@@ -119,6 +132,7 @@ class BillingClient:
                 cache_write_tokens=cache_write_tokens,
                 feature_type=feature_type,
                 caller_user_role=caller_user_role,
+                billing_execution_context=billing_execution_context,
             )
             logger.info("ai_billing: report_tokens write OK org=%d", organization_id)
             return usage
@@ -141,6 +155,7 @@ class BillingClient:
         cache_write_tokens: int = 0,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        billing_execution_context: BillingExecutionContextV1 | None = None,
     ) -> None:
         """Write a debit with a pre-calculated cost.
 
@@ -161,34 +176,156 @@ class BillingClient:
                 cache_write_tokens=cache_write_tokens,
                 feature_type=feature_type,
                 caller_user_role=caller_user_role,
+                billing_execution_context=billing_execution_context,
             )
         except Exception:
             if not self._fail_silently:
                 raise
             logger.exception("ai_billing: report_cost() failed")
 
-    async def check_balance(self, organization_id: int) -> BalanceInfo | None:
+    async def report_v1(
+        self,
+        response: Any,
+        *,
+        organization_id: int,
+        user_id: int,
+        billing_execution_context: BillingExecutionContextV1,
+        model_override: str | None = None,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
+    ) -> UsageInfo | None:
+        """Context-required organization debit for parsed AI responses."""
+        return await self.report(
+            response,
+            organization_id=organization_id,
+            user_id=user_id,
+            billing_execution_context=billing_execution_context,
+            model_override=model_override,
+            feature_type=feature_type,
+            caller_user_role=caller_user_role,
+        )
+
+    async def report_tokens_v1(
+        self,
+        model: str,
+        *,
+        organization_id: int,
+        user_id: int,
+        billing_execution_context: BillingExecutionContextV1,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        thinking_output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
+    ) -> UsageInfo | None:
+        """Context-required organization debit for explicit token usage."""
+        return await self.report_tokens(
+            model,
+            organization_id=organization_id,
+            user_id=user_id,
+            billing_execution_context=billing_execution_context,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            thinking_output_tokens=thinking_output_tokens,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_tokens=cache_write_tokens,
+            feature_type=feature_type,
+            caller_user_role=caller_user_role,
+        )
+
+    async def report_cost_v1(
+        self,
+        cost_usd: float | Decimal,
+        *,
+        organization_id: int,
+        user_id: int,
+        billing_execution_context: BillingExecutionContextV1,
+        model_id: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        feature_type: str | None = None,
+        caller_user_role: str | None = None,
+    ) -> None:
+        """Context-required organization debit for a pre-calculated cost."""
+        await self.report_cost(
+            cost_usd,
+            organization_id=organization_id,
+            user_id=user_id,
+            billing_execution_context=billing_execution_context,
+            model_id=model_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_tokens=cache_write_tokens,
+            feature_type=feature_type,
+            caller_user_role=caller_user_role,
+        )
+
+    async def check_balance(
+        self,
+        organization_id: int,
+        *,
+        actor_user_id: int | None = None,
+        operation: str | None = None,
+        feature_type: str | None = None,
+    ) -> BalanceInfo | None:
         """Read cached credit balance from Redis.
 
         Returns None if no cache entry exists (cache miss or expired).
         Note: cache may be up to 30 min stale.
         """
         try:
-            return await self._transport.read_balance(organization_id)
+            return await self._transport.read_balance(
+                organization_id,
+                actor_user_id=actor_user_id,
+                operation=operation,
+                feature_type=feature_type,
+            )
         except Exception:
             if not self._fail_silently:
                 raise
             logger.exception("ai_billing: check_balance() failed")
             return None
 
-    async def has_credits(self, organization_id: int) -> bool:
+    async def has_credits(
+        self,
+        organization_id: int,
+        *,
+        actor_user_id: int | None = None,
+        operation: str | None = None,
+        feature_type: str | None = None,
+    ) -> bool:
         """Quick check: does the organization have a positive credit balance?
 
         When fail_silently=False and balance cannot be determined, raises
         RuntimeError so the caller can block the operation.
         When fail_silently=True, returns True (fail-open) for backwards compatibility.
         """
-        balance = await self.check_balance(organization_id)
+        # Actor/action context is mandatory for organization-scoped checks.
+        # Do not apply the legacy fail-open behavior to an untrusted or missing
+        # context: that would allow a caller to proceed after an HTTP fallback
+        # was correctly rejected by Credit System's role gate.
+        if (
+            actor_user_id is None
+            or actor_user_id <= 0
+            or operation not in BILLING_OPERATIONS
+        ):
+            logger.warning(
+                "ai_billing: has_credits() refused without valid actor/action context for org=%d",
+                organization_id,
+            )
+            return False
+
+        balance = await self.check_balance(
+            organization_id,
+            actor_user_id=actor_user_id,
+            operation=operation,
+            feature_type=feature_type,
+        )
         if balance is None:
             if not self._fail_silently:
                 raise RuntimeError(
@@ -353,12 +490,18 @@ class BillingClient:
         cache_write_tokens: int = 0,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        billing_execution_context: BillingExecutionContextV1 | None = None,
     ) -> None:
         payload = DebitPayload(
             organization_id=organization_id,
             amount_usd=cost_usd,
             service=self._service_name,
             user_id=user_id,
+            actor_user_id=(
+                billing_execution_context.actor_user_id
+                if billing_execution_context is not None
+                else None
+            ),
             model_id=model_id,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -366,6 +509,7 @@ class BillingClient:
             cache_write_tokens=cache_write_tokens,
             feature_type=feature_type,
             caller_user_role=caller_user_role,
+            billing_execution_context=billing_execution_context,
         )
         await self._transport.write_debit(payload)
 

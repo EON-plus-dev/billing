@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 import jwt
@@ -14,6 +14,24 @@ logger = logging.getLogger("ai_billing")
 _REQUEST_TIMEOUT = 3  # seconds
 _TOKEN_LIFETIME = 300  # 5 min
 _TOKEN_REFRESH_MARGIN = 60  # refresh 1 min before expiry
+BillingOperation = Literal[
+    "ai_chat",
+    "analytics",
+    "document_generation",
+    "income_auto_sync",
+    "income_manual_sync",
+    "bank_statement_parse",
+]
+BILLING_OPERATIONS = frozenset(
+    {
+        "ai_chat",
+        "analytics",
+        "document_generation",
+        "income_auto_sync",
+        "income_manual_sync",
+        "bank_statement_parse",
+    }
+)
 
 
 class HttpTransport:
@@ -25,6 +43,7 @@ class HttpTransport:
         "_secret_key",
         "_session",
         "_cached_token",
+        "_cached_actor_user_id",
         "_token_expires_at",
     )
 
@@ -34,20 +53,27 @@ class HttpTransport:
         self._secret_key = secret_key
         self._session: aiohttp.ClientSession | None = None
         self._cached_token: str | None = None
+        self._cached_actor_user_id: int | None = None
         self._token_expires_at: float = 0.0
 
-    def _get_token(self) -> str:
+    def _get_token(self, actor_user_id: int) -> str:
         now = time.time()
-        if self._cached_token and now < self._token_expires_at - _TOKEN_REFRESH_MARGIN:
+        if (
+            self._cached_token
+            and self._cached_actor_user_id == actor_user_id
+            and now < self._token_expires_at - _TOKEN_REFRESH_MARGIN
+        ):
             return self._cached_token
 
         exp = now + _TOKEN_LIFETIME
         payload: dict[str, Any] = {
             "sub": self._service_name,
             "type": "internal_service",
+            "actor_user_id": actor_user_id,
             "exp": exp,
         }
         self._cached_token = jwt.encode(payload, self._secret_key, algorithm="HS256")
+        self._cached_actor_user_id = actor_user_id
         self._token_expires_at = exp
         return self._cached_token
 
@@ -58,14 +84,47 @@ class HttpTransport:
             )
         return self._session
 
-    async def check_balance(self, organization_id: int) -> BalanceInfo | None:
-        """POST /internal/check-balance → BalanceInfo or None on any error."""
+    async def check_balance(
+        self,
+        organization_id: int,
+        *,
+        actor_user_id: int | None = None,
+        operation: BillingOperation | None = None,
+        feature_type: str | None = None,
+    ) -> BalanceInfo | None:
+        """POST /internal/check-balance with signed actor/action context.
+
+        The credit-system role gate binds ``actor_user_id`` in the request to
+        the same claim in the signed internal-service JWT.  A cache miss must
+        therefore fail closed when the caller has no server-issued actor and
+        operation context; a request-controlled legacy ``user_id`` is never
+        accepted as a substitute.
+        """
+        if (
+            actor_user_id is None
+            or actor_user_id <= 0
+            or operation not in BILLING_OPERATIONS
+        ):
+            logger.warning(
+                "ai_billing: refusing HTTP balance fallback without actor/action context for org=%d",
+                organization_id,
+            )
+            return None
         try:
             session = await self._get_session()
-            token = self._get_token()
+            token = self._get_token(actor_user_id)
+            request_body: dict[str, Any] = {
+                "organization_id": organization_id,
+                "user_id": actor_user_id,
+                "actor_user_id": actor_user_id,
+                "operation": operation,
+                "required_credits": 0,
+            }
+            if feature_type is not None:
+                request_body["feature_type"] = feature_type
             resp = await session.post(
                 f"{self._base_url}/internal/check-balance",
-                json={"organization_id": organization_id, "required_credits": 0},
+                json=request_body,
                 headers={"Authorization": f"Bearer {token}"},
             )
             if resp.status != 200:
@@ -90,7 +149,9 @@ class HttpTransport:
         """POST /internal/check-balance-by-user → BalanceInfo or None on any error."""
         try:
             session = await self._get_session()
-            token = self._get_token()
+            # This endpoint is retained for user-pool compatibility. It does
+            # not resolve an organization-scoped actor/payer contract.
+            token = self._get_token(user_id)
             resp = await session.post(
                 f"{self._base_url}/internal/check-balance-by-user",
                 json={"user_id": user_id, "required_credits": 0},

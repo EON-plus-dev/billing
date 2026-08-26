@@ -95,6 +95,8 @@ class BillingClient:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 thinking_output_tokens=thinking_output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_write_tokens=cache_write_tokens,
             )
             logger.info(
                 "ai_billing: report_tokens cost=%s model=%s in=%d out=%d cache_r=%d cache_w=%d org=%d",

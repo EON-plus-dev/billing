@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
@@ -40,6 +41,10 @@ MODEL_PRICING: dict[str, ModelPrice] = {
     ),
     "gpt-5-nano": ModelPrice(
         input=Decimal("0.05"), output=Decimal("0.40"), provider="openai",
+    ),
+    "gpt-5.5": ModelPrice(
+        input=Decimal("5.00"), output=Decimal("30.00"),
+        cache_read=Decimal("0.50"), provider="openai",
     ),
     "gpt-4": ModelPrice(
         input=Decimal("30.00"), output=Decimal("60.00"), provider="openai",
@@ -81,7 +86,7 @@ MODEL_PRICING: dict[str, ModelPrice] = {
 }
 
 # Date pricing was last verified against provider docs. Bump on every price update.
-MODEL_PRICING_VERIFIED_AT: str = "2026-04-29"
+MODEL_PRICING_VERIFIED_AT: str = "2026-08-26"
 
 # Module constant — captured at import. READ-ONLY snapshot for inspection / logging.
 # DO NOT use this in cost-calculation code paths — it does NOT pick up runtime
@@ -100,8 +105,9 @@ def get_vat_multiplier() -> Decimal:
     return Decimal(os.getenv("VAT_MULTIPLIER", "1.20"))
 
 
-# Sorted longest-first for greedy prefix match
+# Sorted longest-first for dated snapshot matching
 _SORTED_PREFIXES = sorted(MODEL_PRICING.keys(), key=len, reverse=True)
+_SNAPSHOT_SUFFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def resolve_model(model: str) -> tuple[str, ModelPrice]:
@@ -112,7 +118,8 @@ def resolve_model(model: str) -> tuple[str, ModelPrice]:
     if model in MODEL_PRICING:
         return model, MODEL_PRICING[model]
     for prefix in _SORTED_PREFIXES:
-        if model.startswith(prefix):
+        snapshot_suffix = model.removeprefix(f"{prefix}-")
+        if model.startswith(f"{prefix}-") and _SNAPSHOT_SUFFIX_RE.fullmatch(snapshot_suffix):
             return prefix, MODEL_PRICING[prefix]
     raise UnknownModelError(
         f"Unknown model: {model!r}. "
@@ -125,6 +132,8 @@ def _calculate_cost_legacy(
     input_tokens: int = 0,
     output_tokens: int = 0,
     thinking_output_tokens: int = 0,
+    cached_input_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> Decimal:
     """Legacy positional-token cost calc — Decimal USD, no VAT, no cache.
 
@@ -136,10 +145,15 @@ def _calculate_cost_legacy(
     For new code use the public calculate_cost(model_id, usage) -> CostBreakdown.
     """
     _, price = resolve_model(model)
+    billable_input_tokens = input_tokens
+    if price.provider == "openai" and price.cache_read:
+        billable_input_tokens = max(input_tokens - cached_input_tokens, 0)
     cost = (
-        price.input * input_tokens
+        price.input * billable_input_tokens
         + price.output * output_tokens
         + price.thinking_output * thinking_output_tokens
+        + price.cache_read * cached_input_tokens
+        + price.cache_write * cache_write_tokens
     ) / _PER_M
     return cost.quantize(Decimal("0.000001"))
 
@@ -152,19 +166,26 @@ def calculate_cost(model_id: str, usage: Usage) -> CostBreakdown:
     vat = cost_no_vat * (VAT_MULTIPLIER - 1); cost_total = cost_no_vat + vat.
     All amounts quantized to 6 decimal places (USD).
 
-    For models without cache_read/cache_write pricing (e.g. OpenAI),
+    For models without cache_read/cache_write pricing,
     cache components silently return Decimal("0") even if usage carries
     cache tokens — matches the fail-silent style of the rest of the lib.
+
+    OpenAI input_tokens includes cached_input_tokens. For OpenAI models with
+    cache pricing, cached tokens are subtracted from regular input before the
+    two components are priced separately.
 
     Raises:
         UnknownModelError (also a ValueError) if model_id is not in
         MODEL_PRICING. Message includes the list of valid model ids.
     """
     _, price = resolve_model(model_id)
+    billable_input_tokens = usage.input_tokens
+    if price.provider == "openai" and price.cache_read:
+        billable_input_tokens = max(usage.input_tokens - usage.cached_input_tokens, 0)
 
     q = Decimal("0.000001")
     by_component: dict[str, Decimal] = {
-        "input":       (price.input * usage.input_tokens / _PER_M).quantize(q),
+        "input":       (price.input * billable_input_tokens / _PER_M).quantize(q),
         "output":      (price.output * usage.output_tokens / _PER_M).quantize(q),
         "cache_read":  (price.cache_read * usage.cached_input_tokens / _PER_M).quantize(q),
         "cache_write": (price.cache_write * usage.cache_write_tokens / _PER_M).quantize(q),

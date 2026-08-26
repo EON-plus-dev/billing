@@ -21,7 +21,7 @@ from ai_billing.pricing import MODEL_PRICING, MODEL_PRICING_VERIFIED_AT
 
 
 # ---------------------------------------------------------------------------
-# Golden master — locked-in prices as of MODEL_PRICING_VERIFIED_AT (2026-04-29).
+# Golden master — locked-in prices as of MODEL_PRICING_VERIFIED_AT (2026-08-26).
 # Each entry: input, output, thinking_output, cache_read, cache_write, provider.
 # Prices are USD per 1M tokens, NO VAT.
 # ---------------------------------------------------------------------------
@@ -61,6 +61,12 @@ EXPECTED_PRICING: dict[str, dict] = {
         "input": Decimal("0.05"), "output": Decimal("0.40"),
         "thinking_output": Decimal("0"),
         "cache_read": Decimal("0"), "cache_write": Decimal("0"),
+        "provider": "openai",
+    },
+    "gpt-5.5": {
+        "input": Decimal("5.00"), "output": Decimal("30.00"),
+        "thinking_output": Decimal("0"),
+        "cache_read": Decimal("0.50"), "cache_write": Decimal("0"),
         "provider": "openai",
     },
     "gpt-4": {

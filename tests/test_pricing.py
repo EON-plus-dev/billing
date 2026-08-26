@@ -31,6 +31,18 @@ class TestResolveModel:
         assert price.input == Decimal("0.25")
         assert price.output == Decimal("2.00")
 
+    def test_gpt55_snapshot_resolves_to_base_model(self):
+        name, price = resolve_model("gpt-5.5-2026-04-23")
+        assert name == "gpt-5.5"
+        assert price.input == Decimal("5.00")
+        assert price.cache_read == Decimal("0.50")
+        assert price.output == Decimal("30.00")
+
+    @pytest.mark.parametrize("model", ["gpt-5.5-pro", "gpt-5.5foo"])
+    def test_gpt55_sibling_names_are_not_snapshot_matches(self, model):
+        with pytest.raises(UnknownModelError):
+            resolve_model(model)
+
     def test_unknown_model(self):
         with pytest.raises(UnknownModelError):
             resolve_model("unknown-model-xyz")
@@ -185,6 +197,19 @@ class TestCalculateCost:
         assert cb.by_component["cache_write"] == Decimal("0")
         # Тільки input ($2.50)
         assert cb.cost_no_vat == Decimal("2.500000")
+
+    def test_gpt55_cached_input_uses_openai_cache_price(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
+        usage = Usage(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cached_input_tokens=1_000_000,
+        )
+        cb = calculate_cost("gpt-5.5", usage)
+        assert cb.by_component["input"] == Decimal("0.000000")
+        assert cb.by_component["cache_read"] == Decimal("0.500000")
+        assert cb.by_component["output"] == Decimal("30.000000")
+        assert cb.cost_no_vat == Decimal("30.500000")
 
     def test_breakdown_with_env_vat_changed(self, monkeypatch):
         monkeypatch.setenv("VAT_MULTIPLIER", "1.50")

@@ -71,7 +71,7 @@ class DebitPayload(BaseModel):
       - model_id            — каноничне ім'я AI-моделі (claude-haiku-4-5, ...).
       - input_tokens        — input usage tokens.
       - output_tokens       — output usage tokens.
-      - cached_input_tokens — Anthropic prompt cache reads.
+      - cached_input_tokens — provider-reported prompt cache reads.
       - cache_write_tokens  — Anthropic prompt cache writes (5-min cache).
       - feature_type        — 'ai_chat' | 'document_generation' | 'analytics'.
       - caller_user_role    — snapshot ролі юзера на момент запиту.

@@ -61,6 +61,21 @@ class TestReportTokens:
         )
         assert usage is None
 
+    async def test_gpt55_cached_input_is_reflected_in_debit_amount(self, client):
+        usage = await client.report_tokens(
+            "gpt-5.5",
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cached_input_tokens=1_000_000,
+            organization_id=1,
+            user_id=2,
+        )
+        assert usage is not None
+        assert usage.cost_usd == Decimal("30.500000")
+        payload = client._transport.write_debit.await_args.args[0]
+        assert payload.amount_usd == Decimal("30.500000")
+        assert payload.cached_input_tokens == 1_000_000
+
     async def test_unknown_model_loud(self):
         c = BillingClient(redis_url="redis://x", service_name="t", fail_silently=False)
         c._transport = AsyncMock()

@@ -155,7 +155,7 @@ from ai_billing import calculate_cost, Usage
 usage = Usage(
     input_tokens=1500,
     output_tokens=800,
-    cached_input_tokens=12000,   # Anthropic prompt cache read
+    cached_input_tokens=12000,   # provider-reported prompt cache read
     cache_write_tokens=5000,     # Anthropic prompt cache write (5-min)
 )
 cb = calculate_cost("claude-sonnet-4-6", usage)
@@ -180,7 +180,7 @@ cb = calculate_cost("claude-sonnet-4-6", usage)
 > - **`VAT_MULTIPLIER`** — read-only snapshot, захоплений на момент `import ai_billing`. Призначений для **інспекції / логування**. НЕ використовуйте в розрахунках, бо він не побачить runtime-зміни (admin UI / `BillingSettings.vat_multiplier` через env propagation, monkeypatch у тестах).
 > - **`get_vat_multiplier()`** — читає env при кожному виклику. Призначений для **розрахункового коду**. `calculate_cost(...)` всередині використовує саме цю функцію, тому ваш виклик завжди отримає актуальне значення.
 
-**Cache pricing** є тільки в Anthropic-моделях. Для OpenAI/Gemini моделей `cached_input_tokens` і `cache_write_tokens` тихо коштують 0 — навіть якщо передано в `Usage`.
+**Cache pricing** є в Anthropic-моделях і `gpt-5.5`. Для інших OpenAI/Gemini моделей `cached_input_tokens` і `cache_write_tokens` тихо коштують 0 — навіть якщо передано в `Usage`.
 
 **Помилки:** при невідомому `model_id` кидається `UnknownModelError` (підклас і `BillingError`, і `ValueError`) з переліком валідних моделей у повідомленні.
 
@@ -206,6 +206,7 @@ cb = calculate_cost("claude-sonnet-4-6", usage)
 | `gpt-4.1-nano` | $0.10 | $0.40 | — | — | — | OpenAI |
 | `gpt-5-mini` | $0.25 | $2.00 | — | — | — | OpenAI |
 | `gpt-5-nano` | $0.05 | $0.40 | — | — | — | OpenAI |
+| `gpt-5.5` | $5.00 | $30.00 | — | $0.50 | — | OpenAI |
 | `gpt-4` | $30.00 | $60.00 | — | — | — | OpenAI |
 | `text-embedding-3-small` | $0.02 | $0.00 | — | — | — | OpenAI |
 | `gemini-3-flash` | $0.10 | $0.40 | — | — | — | Google |
@@ -303,7 +304,7 @@ class UsageInfo(BaseModel):
 class Usage:
     input_tokens: int
     output_tokens: int
-    cached_input_tokens: int = 0   # Anthropic prompt cache read
+    cached_input_tokens: int = 0   # provider-reported prompt cache read
     cache_write_tokens: int = 0    # Anthropic prompt cache write
 ```
 

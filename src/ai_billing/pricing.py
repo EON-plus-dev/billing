@@ -20,6 +20,12 @@ class ModelPrice:
     cache_read: Decimal = Decimal("0")
     cache_write: Decimal = Decimal("0")
     provider: str = ""
+    # Optional provider long-context pricing.  When the total input prompt is
+    # above the threshold, all input-related rates use this multiplier and
+    # output uses its own multiplier for the full request.
+    long_context_threshold: int | None = None
+    long_context_input_multiplier: Decimal = Decimal("1")
+    long_context_output_multiplier: Decimal = Decimal("1")
 
 
 MODEL_PRICING: dict[str, ModelPrice] = {
@@ -45,6 +51,16 @@ MODEL_PRICING: dict[str, ModelPrice] = {
     "gpt-5.5": ModelPrice(
         input=Decimal("5.00"), output=Decimal("30.00"),
         cache_read=Decimal("0.50"), provider="openai",
+    ),
+    # OpenAI — https://developers.openai.com/api/docs/models/gpt-5.6-luna
+    # Standard processing; long context is >272K input tokens.
+    "gpt-5.6-luna": ModelPrice(
+        input=Decimal("0.20"), output=Decimal("1.20"),
+        cache_read=Decimal("0.02"), cache_write=Decimal("0.25"),
+        provider="openai",
+        long_context_threshold=272_000,
+        long_context_input_multiplier=Decimal("2"),
+        long_context_output_multiplier=Decimal("1.5"),
     ),
     "gpt-4": ModelPrice(
         input=Decimal("30.00"), output=Decimal("60.00"), provider="openai",
@@ -86,7 +102,7 @@ MODEL_PRICING: dict[str, ModelPrice] = {
 }
 
 # Date pricing was last verified against provider docs. Bump on every price update.
-MODEL_PRICING_VERIFIED_AT: str = "2026-08-26"
+MODEL_PRICING_VERIFIED_AT: str = "2026-09-16"
 
 # Module constant — captured at import. READ-ONLY snapshot for inspection / logging.
 # DO NOT use this in cost-calculation code paths — it does NOT pick up runtime
@@ -108,6 +124,21 @@ def get_vat_multiplier() -> Decimal:
 # Sorted longest-first for dated snapshot matching
 _SORTED_PREFIXES = sorted(MODEL_PRICING.keys(), key=len, reverse=True)
 _SNAPSHOT_SUFFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _context_rate_multipliers(
+    price: ModelPrice, input_tokens: int,
+) -> tuple[Decimal, Decimal]:
+    """Return input/cache and output multipliers for this request."""
+    if (
+        price.long_context_threshold is not None
+        and input_tokens > price.long_context_threshold
+    ):
+        return (
+            price.long_context_input_multiplier,
+            price.long_context_output_multiplier,
+        )
+    return Decimal("1"), Decimal("1")
 
 
 def resolve_model(model: str) -> tuple[str, ModelPrice]:
@@ -148,12 +179,13 @@ def _calculate_cost_legacy(
     billable_input_tokens = input_tokens
     if price.provider == "openai" and price.cache_read:
         billable_input_tokens = max(input_tokens - cached_input_tokens, 0)
+    input_multiplier, output_multiplier = _context_rate_multipliers(price, input_tokens)
     cost = (
-        price.input * billable_input_tokens
-        + price.output * output_tokens
-        + price.thinking_output * thinking_output_tokens
-        + price.cache_read * cached_input_tokens
-        + price.cache_write * cache_write_tokens
+        price.input * input_multiplier * billable_input_tokens
+        + price.output * output_multiplier * output_tokens
+        + price.thinking_output * output_multiplier * thinking_output_tokens
+        + price.cache_read * input_multiplier * cached_input_tokens
+        + price.cache_write * input_multiplier * cache_write_tokens
     ) / _PER_M
     return cost.quantize(Decimal("0.000001"))
 
@@ -183,12 +215,24 @@ def calculate_cost(model_id: str, usage: Usage) -> CostBreakdown:
     if price.provider == "openai" and price.cache_read:
         billable_input_tokens = max(usage.input_tokens - usage.cached_input_tokens, 0)
 
+    input_multiplier, output_multiplier = _context_rate_multipliers(
+        price, usage.input_tokens,
+    )
+
     q = Decimal("0.000001")
     by_component: dict[str, Decimal] = {
-        "input":       (price.input * billable_input_tokens / _PER_M).quantize(q),
-        "output":      (price.output * usage.output_tokens / _PER_M).quantize(q),
-        "cache_read":  (price.cache_read * usage.cached_input_tokens / _PER_M).quantize(q),
-        "cache_write": (price.cache_write * usage.cache_write_tokens / _PER_M).quantize(q),
+        "input": (
+            price.input * input_multiplier * billable_input_tokens / _PER_M
+        ).quantize(q),
+        "output": (
+            price.output * output_multiplier * usage.output_tokens / _PER_M
+        ).quantize(q),
+        "cache_read": (
+            price.cache_read * input_multiplier * usage.cached_input_tokens / _PER_M
+        ).quantize(q),
+        "cache_write": (
+            price.cache_write * input_multiplier * usage.cache_write_tokens / _PER_M
+        ).quantize(q),
     }
 
     cost_no_vat = sum(by_component.values(), Decimal("0")).quantize(q)

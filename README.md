@@ -180,7 +180,7 @@ cb = calculate_cost("claude-sonnet-4-6", usage)
 > - **`VAT_MULTIPLIER`** — read-only snapshot, захоплений на момент `import ai_billing`. Призначений для **інспекції / логування**. НЕ використовуйте в розрахунках, бо він не побачить runtime-зміни (admin UI / `BillingSettings.vat_multiplier` через env propagation, monkeypatch у тестах).
 > - **`get_vat_multiplier()`** — читає env при кожному виклику. Призначений для **розрахункового коду**. `calculate_cost(...)` всередині використовує саме цю функцію, тому ваш виклик завжди отримає актуальне значення.
 
-**Cache pricing** є в Anthropic-моделях і `gpt-5.5`. Для інших OpenAI/Gemini моделей `cached_input_tokens` і `cache_write_tokens` тихо коштують 0 — навіть якщо передано в `Usage`.
+**Cache pricing** є в Anthropic-моделях, `gpt-5.5` і `gpt-5.6-luna`. Для інших OpenAI/Gemini моделей `cached_input_tokens` і `cache_write_tokens` тихо коштують 0 — навіть якщо передано в `Usage`.
 
 **Помилки:** при невідомому `model_id` кидається `UnknownModelError` (підклас і `BillingError`, і `ValueError`) з переліком валідних моделей у повідомленні.
 
@@ -207,6 +207,7 @@ cb = calculate_cost("claude-sonnet-4-6", usage)
 | `gpt-5-mini` | $0.25 | $2.00 | — | — | — | OpenAI |
 | `gpt-5-nano` | $0.05 | $0.40 | — | — | — | OpenAI |
 | `gpt-5.5` | $5.00 | $30.00 | — | $0.50 | — | OpenAI |
+| `gpt-5.6-luna` | $0.20 | $1.20 | — | $0.02 | $0.25 | OpenAI |
 | `gpt-4` | $30.00 | $60.00 | — | — | — | OpenAI |
 | `text-embedding-3-small` | $0.02 | $0.00 | — | — | — | OpenAI |
 | `gemini-3-flash` | $0.10 | $0.40 | — | — | — | Google |
@@ -218,6 +219,8 @@ cb = calculate_cost("claude-sonnet-4-6", usage)
 | `claude-haiku-4-5` | $1.00 | $5.00 | — | $0.10 | $1.25 | Anthropic |
 
 Anthropic `cache_write` — це 5-хвилинний cache write (1.25× базової input-ціни). 1-годинний (2×) поки не моделюємо.
+
+Для `gpt-5.6-luna` запити з понад 272 000 input-токенів тарифікуються за long-context ставками для всього запиту: input і cache read/write ×2, output ×1.5.
 
 ### Prefix matching
 

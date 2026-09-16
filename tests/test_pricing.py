@@ -38,6 +38,17 @@ class TestResolveModel:
         assert price.cache_read == Decimal("0.50")
         assert price.output == Decimal("30.00")
 
+    def test_gpt56_luna_has_standard_and_long_context_rates(self):
+        name, price = resolve_model("gpt-5.6-luna")
+        assert name == "gpt-5.6-luna"
+        assert price.input == Decimal("0.20")
+        assert price.cache_read == Decimal("0.02")
+        assert price.cache_write == Decimal("0.25")
+        assert price.output == Decimal("1.20")
+        assert price.long_context_threshold == 272_000
+        assert price.long_context_input_multiplier == Decimal("2")
+        assert price.long_context_output_multiplier == Decimal("1.5")
+
     @pytest.mark.parametrize("model", ["gpt-5.5-pro", "gpt-5.5foo"])
     def test_gpt55_sibling_names_are_not_snapshot_matches(self, model):
         with pytest.raises(UnknownModelError):
@@ -91,6 +102,17 @@ class TestCalculateCostLegacy:
     def test_prefix_versioned_model(self):
         cost = _calculate_cost_legacy("gpt-5-nano-2025-08-07", input_tokens=1_000_000)
         assert cost == Decimal("0.05")
+
+    def test_gpt56_luna_legacy_cost_includes_cache_pricing(self):
+        cost = _calculate_cost_legacy(
+            "gpt-5.6-luna",
+            input_tokens=100_000,
+            output_tokens=10_000,
+            cached_input_tokens=80_000,
+        )
+        # 20k regular input × $0.20 + 80k cached input × $0.02
+        # + 10k output × $1.20 = $0.017600.
+        assert cost == Decimal("0.017600")
 
 
 class TestModelPriceCachePricing:
@@ -210,6 +232,76 @@ class TestCalculateCost:
         assert cb.by_component["cache_read"] == Decimal("0.500000")
         assert cb.by_component["output"] == Decimal("30.000000")
         assert cb.cost_no_vat == Decimal("30.500000")
+
+    def test_gpt56_luna_short_context_prices_cache_components(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
+        # 150k regular input at $0.20, 50k cached input at $0.02,
+        # 1M output at $1.20, and 100k cache writes at $0.25.
+        usage = Usage(
+            input_tokens=200_000,
+            output_tokens=1_000_000,
+            cached_input_tokens=50_000,
+            cache_write_tokens=100_000,
+        )
+        cb = calculate_cost("gpt-5.6-luna", usage)
+        assert cb.by_component["input"] == Decimal("0.030000")
+        assert cb.by_component["cache_read"] == Decimal("0.001000")
+        assert cb.by_component["cache_write"] == Decimal("0.025000")
+        assert cb.by_component["output"] == Decimal("1.200000")
+        assert cb.cost_no_vat == Decimal("1.256000")
+        assert cb.cost_total == Decimal("1.256000")
+
+    def test_gpt56_luna_adapter_usage_includes_vat(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.20")
+        usage = Usage(
+            input_tokens=100_000,
+            output_tokens=10_000,
+            cached_input_tokens=80_000,
+        )
+        cb = calculate_cost("gpt-5.6-luna", usage)
+        assert cb.by_component["input"] == Decimal("0.004000")
+        assert cb.by_component["cache_read"] == Decimal("0.001600")
+        assert cb.by_component["output"] == Decimal("0.012000")
+        assert cb.cost_no_vat == Decimal("0.017600")
+        assert cb.vat == Decimal("0.003520")
+        assert cb.cost_total == Decimal("0.021120")
+
+    @pytest.mark.parametrize(
+        ("input_tokens", "expected_input", "expected_output"),
+        [
+            (272_000, Decimal("0.054400"), Decimal("1.200000")),
+            (272_001, Decimal("0.108800"), Decimal("1.800000")),
+        ],
+    )
+    def test_gpt56_luna_long_context_boundary(
+        self, monkeypatch, input_tokens, expected_input, expected_output,
+    ):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
+        cb = calculate_cost(
+            "gpt-5.6-luna",
+            Usage(input_tokens=input_tokens, output_tokens=1_000_000),
+        )
+        assert cb.by_component["input"] == expected_input
+        assert cb.by_component["output"] == expected_output
+
+    def test_gpt56_luna_long_context_prices_cached_input_and_writes(self, monkeypatch):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.20")
+        usage = Usage(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cached_input_tokens=250_000,
+            cache_write_tokens=100_000,
+        )
+        cb = calculate_cost("gpt-5.6-luna", usage)
+        # Long context rates are input/cache x2 and output x1.5:
+        # .30 regular + .010 cached + .050 writes + 1.80 output = 2.160000.
+        assert cb.by_component["input"] == Decimal("0.300000")
+        assert cb.by_component["cache_read"] == Decimal("0.010000")
+        assert cb.by_component["cache_write"] == Decimal("0.050000")
+        assert cb.by_component["output"] == Decimal("1.800000")
+        assert cb.cost_no_vat == Decimal("2.160000")
+        assert cb.vat == Decimal("0.432000")
+        assert cb.cost_total == Decimal("2.592000")
 
     def test_breakdown_with_env_vat_changed(self, monkeypatch):
         monkeypatch.setenv("VAT_MULTIPLIER", "1.50")

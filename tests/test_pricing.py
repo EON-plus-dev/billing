@@ -49,6 +49,17 @@ class TestResolveModel:
         assert price.long_context_input_multiplier == Decimal("2")
         assert price.long_context_output_multiplier == Decimal("1.5")
 
+    def test_gpt6_luna_has_standard_and_long_context_rates(self):
+        name, price = resolve_model("gpt-6-luna")
+        assert name == "gpt-6-luna"
+        assert price.input == Decimal("0.10")
+        assert price.cache_read == Decimal("0.01")
+        assert price.cache_write == Decimal("0.125")
+        assert price.output == Decimal("0.50")
+        assert price.long_context_threshold == 272_000
+        assert price.long_context_input_multiplier == Decimal("2")
+        assert price.long_context_output_multiplier == Decimal("1.5")
+
     @pytest.mark.parametrize("model", ["gpt-5.5-pro", "gpt-5.5foo"])
     def test_gpt55_sibling_names_are_not_snapshot_matches(self, model):
         with pytest.raises(UnknownModelError):
@@ -250,6 +261,32 @@ class TestCalculateCost:
         assert cb.by_component["output"] == Decimal("1.200000")
         assert cb.cost_no_vat == Decimal("1.256000")
         assert cb.cost_total == Decimal("1.256000")
+
+    @pytest.mark.parametrize(
+        ("input_tokens", "expected_input", "expected_cache", "expected_write", "expected_output"),
+        [
+            (272_000, "0.022200", "0.000500", "0.012500", "0.500000"),
+            (272_001, "0.044400", "0.001000", "0.025000", "0.750000"),
+        ],
+    )
+    def test_gpt6_luna_pricing_across_long_context_boundary(
+        self, monkeypatch, input_tokens, expected_input, expected_cache,
+        expected_write, expected_output,
+    ):
+        monkeypatch.setenv("VAT_MULTIPLIER", "1.00")
+        cb = calculate_cost(
+            "gpt-6-luna",
+            Usage(
+                input_tokens=input_tokens,
+                output_tokens=1_000_000,
+                cached_input_tokens=50_000,
+                cache_write_tokens=100_000,
+            ),
+        )
+        assert cb.by_component["input"] == Decimal(expected_input)
+        assert cb.by_component["cache_read"] == Decimal(expected_cache)
+        assert cb.by_component["cache_write"] == Decimal(expected_write)
+        assert cb.by_component["output"] == Decimal(expected_output)
 
     def test_gpt56_luna_adapter_usage_includes_vat(self, monkeypatch):
         monkeypatch.setenv("VAT_MULTIPLIER", "1.20")

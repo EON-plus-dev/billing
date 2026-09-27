@@ -62,6 +62,16 @@ MODEL_PRICING: dict[str, ModelPrice] = {
         long_context_input_multiplier=Decimal("2"),
         long_context_output_multiplier=Decimal("1.5"),
     ),
+    # OpenAI — https://developers.openai.com/api/docs/models/gpt-6-luna
+    # Standard processing; long context is >272K input tokens.
+    "gpt-6-luna": ModelPrice(
+        input=Decimal("0.10"), output=Decimal("0.50"),
+        cache_read=Decimal("0.01"), cache_write=Decimal("0.125"),
+        provider="openai",
+        long_context_threshold=272_000,
+        long_context_input_multiplier=Decimal("2"),
+        long_context_output_multiplier=Decimal("1.5"),
+    ),
     "gpt-4": ModelPrice(
         input=Decimal("30.00"), output=Decimal("60.00"), provider="openai",
     ),
@@ -102,7 +112,7 @@ MODEL_PRICING: dict[str, ModelPrice] = {
 }
 
 # Date pricing was last verified against provider docs. Bump on every price update.
-MODEL_PRICING_VERIFIED_AT: str = "2026-09-16"
+MODEL_PRICING_VERIFIED_AT: str = "2026-09-28"
 
 # Module constant — captured at import. READ-ONLY snapshot for inspection / logging.
 # DO NOT use this in cost-calculation code paths — it does NOT pick up runtime

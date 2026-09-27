@@ -75,6 +75,12 @@ EXPECTED_PRICING: dict[str, dict] = {
         "cache_read": Decimal("0.02"), "cache_write": Decimal("0.25"),
         "provider": "openai",
     },
+    "gpt-6-luna": {
+        "input": Decimal("0.10"), "output": Decimal("0.50"),
+        "thinking_output": Decimal("0"),
+        "cache_read": Decimal("0.01"), "cache_write": Decimal("0.125"),
+        "provider": "openai",
+    },
     "gpt-4": {
         "input": Decimal("30.00"), "output": Decimal("60.00"),
         "thinking_output": Decimal("0"),

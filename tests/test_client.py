@@ -191,3 +191,26 @@ class TestReportTokensByUserPricing:
         assert user_usage.cost_usd == org_usage.cost_usd == Decimal("30.500000")
         payload = client._transport.write_debit.await_args.args[0]
         assert payload.amount_usd == Decimal("30.500000")
+
+
+class TestOperationIdValidation:
+    @pytest.mark.parametrize(
+        "bad",
+        ["queue", "dlq", "dlq:abc", "  ", "a b", "x" * 256, "з", 123],
+    )
+    async def test_rejected_even_when_fail_silently(self, client, bad):
+        with pytest.raises(ValueError):
+            await client.report_cost(0.01, organization_id=1, user_id=2, operation_id=bad)
+        with pytest.raises(ValueError):
+            await client.report_tokens_by_user(
+                "gpt-4o-mini", input_tokens=1, output_tokens=1, user_id=2, operation_id=bad,
+            )
+        client._transport.write_debit.assert_not_awaited()
+
+    @pytest.mark.parametrize("good", ["codex:th_1:turn-2", "a.b-c_d:9", "x" * 255])
+    async def test_accepted(self, client, good):
+        await client.report_tokens(
+            "gpt-4o-mini", input_tokens=1, output_tokens=1,
+            organization_id=1, user_id=2, operation_id=good,
+        )
+        assert client._transport.write_debit.await_args.args[0].operation_id == good

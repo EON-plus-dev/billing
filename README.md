@@ -61,7 +61,7 @@ usage = await billing.report(response, organization_id=1, user_id=2, model_overr
 
 ---
 
-### `await billing.report_tokens(model, *, input_tokens, output_tokens, thinking_output_tokens=0, organization_id, user_id)`
+### `await billing.report_tokens(model, *, input_tokens, output_tokens, thinking_output_tokens=0, cached_input_tokens=0, cache_write_tokens=0, organization_id, user_id, feature_type=None, caller_user_role=None, operation_id=None)`
 
 Ручне передавання кількості токенів. Корисно коли є тільки числа, а не об'єкт відповіді.
 
@@ -80,7 +80,7 @@ usage = await billing.report_tokens(
 
 ---
 
-### `await billing.report_cost(cost_usd, *, organization_id, user_id)`
+### `await billing.report_cost(cost_usd, *, organization_id, user_id, model_id=None, ..., operation_id=None)`
 
 Прямий запис дебету із заданою вартістю. Без розрахунку токенів.
 
@@ -272,6 +272,8 @@ Payload JSON:
 
 - TTL ключа: 24 години
 - `operation_id`: ключ ідемпотентності в credit_system. Якщо caller не передав `operation_id=`, генерується UUID4 hex. Для повторної спроби того самого списання передавайте той самий `operation_id` у `report_tokens()` / `report_tokens_by_user()` / `report_cost()` / `report_cost_by_user()`: credit_system не спише вдруге
+- `operation_id` унікальний глобально серед усіх сервісів (unique-індекс у `credit_transactions` не враховує сервіс, користувача чи суму). Додавайте префікс сервісу: `"{service}:{scope}:{id}"`, напр. `main-orchestrator:codex:<thread_id>:<turn_id>`
+- Формат: 1–255 символів `[A-Za-z0-9._:-]`; значення `queue`, `dlq` і префікс `dlq:` зарезервовані під службові ключі черги. Некоректний `operation_id` дає `ValueError` навіть при `fail_silently=True`, бо це помилка виклику
 - Pipeline: SET + SADD атомарно в одному round-trip
 
 ### Читання балансу

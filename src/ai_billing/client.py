@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -12,6 +13,26 @@ from .redis_transport import RedisTransport
 from .schemas import BalanceInfo, DebitPayload, UsageInfo
 
 logger = logging.getLogger("ai_billing")
+
+_OPERATION_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,255}")
+# Ключі `debit:queue` / `debit:dlq*` належать службовим структурам Redis-черги.
+_RESERVED_OPERATION_IDS = frozenset({"queue", "dlq"})
+
+
+def _validate_operation_id(operation_id: str | None) -> None:
+    """Помилка виклику, тому ValueError навіть при fail_silently=True."""
+    if operation_id is None:
+        return
+    if (
+        not isinstance(operation_id, str)
+        or not _OPERATION_ID_RE.fullmatch(operation_id)
+        or operation_id in _RESERVED_OPERATION_IDS
+        or operation_id.startswith("dlq:")
+    ):
+        raise ValueError(
+            "operation_id must be 1-255 chars of [A-Za-z0-9._:-] "
+            "and not 'queue', 'dlq' or 'dlq:*'"
+        )
 
 
 class BillingClient:
@@ -90,6 +111,7 @@ class BillingClient:
         + feature_type + caller_user_role передаються у credit_system FIFO
         context для запису в ai_usage_events.
         """
+        _validate_operation_id(operation_id)
         try:
             cost = _calculate_cost(
                 model,
@@ -154,6 +176,7 @@ class BillingClient:
         caller передає тільки cost_usd (legacy v0.4.0 контракт) — поведінка
         не змінюється, FIFO пропустить ai_usage_events INSERT.
         """
+        _validate_operation_id(operation_id)
         try:
             await self._write(
                 Decimal(str(cost_usd)),
@@ -224,6 +247,7 @@ class BillingClient:
 
         v0.5.0: see report_tokens() for new context-fields semantics.
         """
+        _validate_operation_id(operation_id)
         try:
             cost = _calculate_cost(
                 model,
@@ -283,6 +307,7 @@ class BillingClient:
 
         v0.5.0: see report_cost() for new context-fields semantics.
         """
+        _validate_operation_id(operation_id)
         try:
             await self._write_by_user(
                 Decimal(str(cost_usd)),

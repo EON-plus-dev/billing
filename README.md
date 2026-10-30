@@ -271,7 +271,7 @@ Payload JSON:
 ```
 
 - TTL ключа: 24 години
-- `operation_id`: автогенерований UUID4 hex
+- `operation_id`: ключ ідемпотентності в credit_system. Якщо caller не передав `operation_id=`, генерується UUID4 hex. Для повторної спроби того самого списання передавайте той самий `operation_id` у `report_tokens()` / `report_tokens_by_user()` / `report_cost()` / `report_cost_by_user()`: credit_system не спише вдруге
 - Pipeline: SET + SADD атомарно в одному round-trip
 
 ### Читання балансу

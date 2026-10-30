@@ -82,6 +82,7 @@ class BillingClient:
         user_id: int,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        operation_id: str | None = None,
     ) -> UsageInfo | None:
         """Calculate cost from token counts and write debit.
 
@@ -121,6 +122,7 @@ class BillingClient:
                 cache_write_tokens=cache_write_tokens,
                 feature_type=feature_type,
                 caller_user_role=caller_user_role,
+                operation_id=operation_id,
             )
             logger.info("ai_billing: report_tokens write OK org=%d", organization_id)
             return usage
@@ -143,6 +145,7 @@ class BillingClient:
         cache_write_tokens: int = 0,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        operation_id: str | None = None,
     ) -> None:
         """Write a debit with a pre-calculated cost.
 
@@ -163,6 +166,7 @@ class BillingClient:
                 cache_write_tokens=cache_write_tokens,
                 feature_type=feature_type,
                 caller_user_role=caller_user_role,
+                operation_id=operation_id,
             )
         except Exception:
             if not self._fail_silently:
@@ -214,6 +218,7 @@ class BillingClient:
         user_id: int,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        operation_id: str | None = None,
     ) -> UsageInfo | None:
         """Calculate cost from token counts and write debit for a user (no org).
 
@@ -225,6 +230,8 @@ class BillingClient:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 thinking_output_tokens=thinking_output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_write_tokens=cache_write_tokens,
             )
             logger.info(
                 "ai_billing: report_tokens_by_user cost=%s model=%s in=%d out=%d cache_r=%d cache_w=%d user=%d",
@@ -248,6 +255,7 @@ class BillingClient:
                 cache_write_tokens=cache_write_tokens,
                 feature_type=feature_type,
                 caller_user_role=caller_user_role,
+                operation_id=operation_id,
             )
             logger.info("ai_billing: report_tokens_by_user write OK user=%d", user_id)
             return usage
@@ -269,6 +277,7 @@ class BillingClient:
         cache_write_tokens: int = 0,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        operation_id: str | None = None,
     ) -> None:
         """Write a debit with a pre-calculated cost for a user (no org).
 
@@ -285,6 +294,7 @@ class BillingClient:
                 cache_write_tokens=cache_write_tokens,
                 feature_type=feature_type,
                 caller_user_role=caller_user_role,
+                operation_id=operation_id,
             )
         except Exception:
             if not self._fail_silently:
@@ -355,6 +365,7 @@ class BillingClient:
         cache_write_tokens: int = 0,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        operation_id: str | None = None,
     ) -> None:
         payload = DebitPayload(
             organization_id=organization_id,
@@ -368,6 +379,7 @@ class BillingClient:
             cache_write_tokens=cache_write_tokens,
             feature_type=feature_type,
             caller_user_role=caller_user_role,
+            **({"operation_id": operation_id} if operation_id else {}),
         )
         await self._transport.write_debit(payload)
 
@@ -383,6 +395,7 @@ class BillingClient:
         cache_write_tokens: int = 0,
         feature_type: str | None = None,
         caller_user_role: str | None = None,
+        operation_id: str | None = None,
     ) -> None:
         payload = DebitPayload(
             organization_id=None,
@@ -396,5 +409,6 @@ class BillingClient:
             cache_write_tokens=cache_write_tokens,
             feature_type=feature_type,
             caller_user_role=caller_user_role,
+            **({"operation_id": operation_id} if operation_id else {}),
         )
         await self._transport.write_debit(payload)
